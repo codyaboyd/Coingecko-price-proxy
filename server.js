@@ -14,6 +14,8 @@ const COINGECKO_DEMO_API_KEY = process.env.COINGECKO_DEMO_API_KEY || '';
 const COINGECKO_PRO_API_KEY = process.env.COINGECKO_PRO_API_KEY || '';
 
 const REQUEST_DELAY_MS = Number(process.env.COINGECKO_REQUEST_DELAY_MS || 2500);
+const REQUEST_DELAY_ON_RATE_LIMIT_MS = Number(process.env.COINGECKO_REQUEST_DELAY_ON_RATE_LIMIT_MS || 15_000);
+const REQUEST_MAX_RETRIES = Number(process.env.COINGECKO_REQUEST_MAX_RETRIES || 2);
 const UPDATE_INTERVAL_MS = Number(process.env.UPDATE_INTERVAL_MS || 300000);
 const BACKFILL_DAYS = Number(process.env.BACKFILL_DAYS || 365);
 const BACKFILL_CHUNK_DAYS = Number(process.env.BACKFILL_CHUNK_DAYS || 90);
@@ -21,10 +23,13 @@ const DEFAULT_VS_CURRENCY = process.env.DEFAULT_VS_CURRENCY || 'usd';
 
 const ASSETS_FILE = path.resolve('./assets.json');
 
-const COINGECKO_BASE =
-  COINGECKO_PLAN === 'pro'
-    ? 'https://pro-api.coingecko.com/api/v3'
-    : 'https://api.coingecko.com/api/v3';
+const COINGECKO_BASES = {
+  pro: 'https://pro-api.coingecko.com/api/v3',
+  demo: 'https://api.coingecko.com/api/v3'
+};
+
+const preferredPlan = COINGECKO_PLAN === 'pro' ? 'pro' : 'demo';
+let activePlan = preferredPlan;
 
 const app = express();
 app.use(cors());
@@ -244,70 +249,115 @@ function loadInitialAssets() {
   console.log(`[assets] loaded ${assets.length} assets from assets.json`);
 }
 
-let lastRequestAt = 0;
+let nextRequestAt = Date.now();
 const coingeckoLimit = pLimit(1);
 
-async function throttledFetch(url, options = {}) {
+function getBaseUrlForPlan(plan) {
+  return COINGECKO_BASES[plan] || COINGECKO_BASES.demo;
+}
+
+function parseRetryAfterMs(retryAfterValue) {
+  if (!retryAfterValue) return null;
+  const numeric = Number(retryAfterValue);
+  if (Number.isFinite(numeric)) return Math.max(0, numeric * 1000);
+  const asDate = Date.parse(String(retryAfterValue));
+  if (Number.isNaN(asDate)) return null;
+  return Math.max(0, asDate - Date.now());
+}
+
+function buildCoinGeckoUrl(plan, endpointPath, query = {}) {
+  const url = new URL(`${getBaseUrlForPlan(plan)}${endpointPath}`);
+  for (const [key, value] of Object.entries(query)) {
+    url.searchParams.set(key, String(value));
+  }
+  return url.toString();
+}
+
+async function throttledFetch(endpointPath, query = {}, options = {}) {
   return coingeckoLimit(async () => {
-    const elapsed = Date.now() - lastRequestAt;
-    const wait = Math.max(0, REQUEST_DELAY_MS - elapsed);
+    const wait = Math.max(0, nextRequestAt - Date.now());
     if (wait > 0) await sleep(wait);
+    nextRequestAt = Date.now() + REQUEST_DELAY_MS;
 
-    lastRequestAt = Date.now();
+    let attemptedFallback = false;
 
-    const headers = {
-      accept: 'application/json',
-      ...(options.headers || {})
-    };
+    for (let attempt = 0; attempt <= REQUEST_MAX_RETRIES; attempt++) {
+      const headers = {
+        accept: 'application/json',
+        ...(options.headers || {})
+      };
 
-    if (COINGECKO_PLAN === 'pro' && COINGECKO_PRO_API_KEY) {
-      headers['x-cg-pro-api-key'] = COINGECKO_PRO_API_KEY;
-    } else if (COINGECKO_DEMO_API_KEY) {
-      headers['x-cg-demo-api-key'] = COINGECKO_DEMO_API_KEY;
-    }
+      if (activePlan === 'pro' && COINGECKO_PRO_API_KEY) {
+        headers['x-cg-pro-api-key'] = COINGECKO_PRO_API_KEY;
+      } else if (COINGECKO_DEMO_API_KEY) {
+        headers['x-cg-demo-api-key'] = COINGECKO_DEMO_API_KEY;
+      }
 
-    const res = await fetch(url, {
-      ...options,
-      headers
-    });
+      const url = buildCoinGeckoUrl(activePlan, endpointPath, query);
+      const res = await fetch(url, {
+        ...options,
+        headers
+      });
 
-    const text = await res.text();
+      const text = await res.text();
 
-    let json = null;
-    try {
-      json = text ? JSON.parse(text) : null;
-    } catch {
-      json = { raw: text };
-    }
+      let json = null;
+      try {
+        json = text ? JSON.parse(text) : null;
+      } catch {
+        json = { raw: text };
+      }
 
-    if (!res.ok) {
+      if (res.ok) return json;
+
+      const retryAfterMs = parseRetryAfterMs(res.headers.get('retry-after')) ?? REQUEST_DELAY_ON_RATE_LIMIT_MS;
+
+      if ((res.status === 401 || res.status === 403) && activePlan === 'pro' && !attemptedFallback) {
+        attemptedFallback = true;
+        activePlan = 'demo';
+        console.warn('[coingecko] pro auth rejected, falling back to demo endpoint');
+        continue;
+      }
+
+      if ((res.status === 429 || res.status === 503) && attempt < REQUEST_MAX_RETRIES) {
+        nextRequestAt = Math.max(nextRequestAt, Date.now() + retryAfterMs);
+        console.warn(`[coingecko] rate-limited (${res.status}), retrying in ${retryAfterMs}ms`);
+        await sleep(retryAfterMs);
+        continue;
+      }
+
       const err = new Error(`CoinGecko HTTP ${res.status}: ${JSON.stringify(json).slice(0, 500)}`);
       err.status = res.status;
       err.payload = json;
+      err.plan = activePlan;
       throw err;
     }
-
-    return json;
   });
 }
 
 function buildMarketChartRangeUrl({ assetId, vsCurrency, from, to }) {
-  const url = new URL(`${COINGECKO_BASE}/coins/${encodeURIComponent(assetId)}/market_chart/range`);
-  url.searchParams.set('vs_currency', vsCurrency);
-  url.searchParams.set('from', String(from));
-  url.searchParams.set('to', String(to));
-  url.searchParams.set('interval', 'hourly');
-  return url.toString();
+  return {
+    endpointPath: `/coins/${encodeURIComponent(assetId)}/market_chart/range`,
+    query: {
+      vs_currency: vsCurrency,
+      from,
+      to,
+      interval: 'hourly'
+    }
+  };
 }
 
 function buildSimplePriceUrl({ ids, vsCurrency }) {
-  const url = new URL(`${COINGECKO_BASE}/simple/price`);
-  url.searchParams.set('ids', ids.join(','));
-  url.searchParams.set('vs_currencies', vsCurrency);
-  url.searchParams.set('include_market_cap', 'true');
-  url.searchParams.set('include_24hr_vol', 'true');
-  url.searchParams.set('include_last_updated_at', 'true');
-  return url.toString();
+  return {
+    endpointPath: '/simple/price',
+    query: {
+      ids: ids.join(','),
+      vs_currencies: vsCurrency,
+      include_market_cap: 'true',
+      include_24hr_vol: 'true',
+      include_last_updated_at: 'true'
+    }
+  };
 }
 
 const upsertPointsTx = db.transaction(points => {
@@ -351,14 +401,14 @@ function normalizeMarketChartPayload(assetId, vsCurrency, payload) {
 async function fetchAndStoreRange(assetId, vsCurrency, from, to) {
   if (to <= from) return 0;
 
-  const url = buildMarketChartRangeUrl({
+  const req = buildMarketChartRangeUrl({
     assetId,
     vsCurrency,
     from,
     to
   });
 
-  const payload = await throttledFetch(url);
+  const payload = await throttledFetch(req.endpointPath, req.query);
   const points = normalizeMarketChartPayload(assetId, vsCurrency, payload);
 
   if (points.length > 0) {
@@ -449,6 +499,7 @@ app.get('/health', (req, res) => {
     ok: true,
     time: new Date().toISOString(),
     coingecko_plan: COINGECKO_PLAN,
+    coingecko_active_plan: activePlan,
     db_path: DB_PATH
   });
 });
@@ -600,8 +651,8 @@ app.get('/api/live-price', async (req, res) => {
   const vsCurrency = String(req.query.vs_currency || DEFAULT_VS_CURRENCY);
 
   try {
-    const url = buildSimplePriceUrl({ ids, vsCurrency });
-    const payload = await throttledFetch(url);
+    const req = buildSimplePriceUrl({ ids, vsCurrency });
+    const payload = await throttledFetch(req.endpointPath, req.query);
 
     const now = nowSec();
     const points = [];
@@ -650,7 +701,8 @@ loadInitialAssets();
 
 app.listen(PORT, () => {
   console.log(`CoinGecko history proxy listening on http://localhost:${PORT}`);
-  console.log(`Using CoinGecko base: ${COINGECKO_BASE}`);
+  console.log(`Preferred CoinGecko plan: ${preferredPlan}`);
+  console.log(`Active CoinGecko base: ${getBaseUrlForPlan(activePlan)}`);
 
   syncAllEnabledAssets().catch(err => {
     console.error('[sync:first-run:error]', err);
