@@ -69,6 +69,8 @@ If you are not using an `.env` file, you can export variables directly before ru
 | `COINGECKO_DEMO_API_KEY` | empty | Optional demo key sent as `x-cg-demo-api-key`. |
 | `COINGECKO_PRO_API_KEY` | empty | Optional pro key sent as `x-cg-pro-api-key` when `COINGECKO_PLAN=pro`. |
 | `COINGECKO_REQUEST_DELAY_MS` | `2500` | Minimum delay between outbound CoinGecko calls (global). |
+| `COINGECKO_REQUEST_DELAY_ON_RATE_LIMIT_MS` | `15000` | Backoff delay when CoinGecko returns 429/503 and no `Retry-After` header is present. |
+| `COINGECKO_REQUEST_MAX_RETRIES` | `2` | Number of retries for 429/503 responses before surfacing an error. |
 | `UPDATE_INTERVAL_MS` | `300000` | Background sync interval in ms (default 5 min). |
 | `BACKFILL_DAYS` | `365` | Initial backfill depth when an asset has no data. |
 | `BACKFILL_CHUNK_DAYS` | `90` | Days per range chunk request. |
@@ -85,6 +87,8 @@ COINGECKO_DEMO_API_KEY=
 COINGECKO_PRO_API_KEY=
 
 COINGECKO_REQUEST_DELAY_MS=2500
+COINGECKO_REQUEST_DELAY_ON_RATE_LIMIT_MS=15000
+COINGECKO_REQUEST_MAX_RETRIES=2
 UPDATE_INTERVAL_MS=300000
 BACKFILL_DAYS=365
 BACKFILL_CHUNK_DAYS=90
@@ -223,6 +227,8 @@ npm start      # production-style run
 ## Notes and caveats
 
 - Ensure your request delay is conservative for your plan limits.
+- When `COINGECKO_PLAN=pro`, the proxy starts on the pro base URL and automatically falls back to demo/public endpoints if pro auth is rejected (HTTP 401/403).
+- Rate-limit responses (HTTP 429/503) are retried with `Retry-After` aware backoff to reduce burst failures.
 - `/api/latest` only reports data already cached locally; it does not trigger network fetches.
 - `/api/live-price` is best for explicit on-demand refreshes.
 - For large asset sets, startup backfills can take time due to serialized request throttling.
