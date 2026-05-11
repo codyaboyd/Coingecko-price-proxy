@@ -80,6 +80,18 @@ const MIGRATIONS = [
     up: `
       ALTER TABLE candles ADD COLUMN market_cap REAL;
     `
+  },
+  {
+    version: 3,
+    name: 'add_manual_fetch_run_columns',
+    up: `
+      ALTER TABLE fetch_runs ADD COLUMN range_from INTEGER;
+      ALTER TABLE fetch_runs ADD COLUMN range_to INTEGER;
+      ALTER TABLE fetch_runs ADD COLUMN source TEXT NOT NULL DEFAULT 'coingecko';
+      ALTER TABLE fetch_runs ADD COLUMN points_inserted INTEGER NOT NULL DEFAULT 0;
+      ALTER TABLE fetch_runs ADD COLUMN error TEXT;
+      ALTER TABLE fetch_runs ADD COLUMN finished_at INTEGER;
+    `
   }
 ];
 

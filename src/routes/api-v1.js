@@ -2,6 +2,7 @@ const express = require('express');
 
 const { getPublicAsset, listPublicAssets } = require('../db/queries');
 const { getHistory, SUPPORTED_INTERVALS } = require('../services/history-service');
+const { runManualFetch } = require('../services/manual-fetch-service');
 
 const router = express.Router();
 
@@ -322,6 +323,24 @@ router.get('/assets/:assetId', (req, res, next) => {
     }
 
     res.json({ asset });
+  } catch (error) {
+    next(error);
+  }
+});
+
+
+router.post('/admin/assets/:assetId/fetch', async (req, res, next) => {
+  try {
+    const result = await runManualFetch(getDatabase(req), req.params.assetId, req.body);
+
+    res.status(201).json({
+      fetchRun: result.run,
+      asset: result.asset,
+      candlesNormalized: result.candlesNormalized,
+      candlesChanged: result.candlesChanged,
+      conflictPolicy: result.conflictPolicy,
+      totalCandles: result.totalCandles
+    });
   } catch (error) {
     next(error);
   }
