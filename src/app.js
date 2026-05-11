@@ -2,8 +2,9 @@ const express = require('express');
 const path = require('path');
 
 const adminRoutes = require('./routes/admin');
+const apiV1Routes = require('./routes/api-v1');
 const healthRoutes = require('./routes/health');
-const logger = require('./utils/logger');
+const { errorHandler, notFoundHandler } = require('./middleware/error-handlers');
 
 function createApp(config) {
   const app = express();
@@ -16,6 +17,7 @@ function createApp(config) {
   app.use(express.json());
   app.use('/public', express.static(path.join(process.cwd(), 'public')));
 
+  app.use('/api/v1', apiV1Routes);
   app.use('/health', healthRoutes);
   app.use('/admin', adminRoutes);
 
@@ -23,20 +25,9 @@ function createApp(config) {
     res.redirect('/admin');
   });
 
-  app.use((req, res) => {
-    res.status(404).render('error', {
-      title: 'Not Found',
-      message: 'The requested page could not be found.'
-    });
-  });
+  app.use(notFoundHandler);
 
-  app.use((err, req, res, next) => {
-    logger.error(err.message, { stack: err.stack });
-    res.status(500).render('error', {
-      title: 'Server Error',
-      message: 'Something went wrong.'
-    });
-  });
+  app.use(errorHandler);
 
   return app;
 }
