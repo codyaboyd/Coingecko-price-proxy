@@ -5,6 +5,21 @@ const { resolveFromRoot } = require('../utils/files');
 
 const router = express.Router();
 
+router.get('/api-test', (req, res, next) => {
+  try {
+    const config = req.app.get('config');
+    const assets = loadAssets(config.assetsConfigPath);
+
+    res.render('admin-api-test', {
+      title: `${config.adminTitle} API Test`,
+      appName: config.appName,
+      assets
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
 router.get('/', (req, res, next) => {
   try {
     const config = req.app.get('config');
