@@ -10,7 +10,7 @@
   <body>
     <nav class="navbar navbar-expand-lg bg-dark navbar-dark">
       <div class="container">
-        <a class="navbar-brand" href="/admin">chrono-cache</a>
+        <a class="navbar-brand" href="/admin"><%= status.appName %></a>
         <span class="navbar-text">MVP scaffold</span>
       </div>
     </nav>
@@ -35,6 +35,7 @@
                     <th scope="col">Name</th>
                     <th scope="col">CoinGecko ID</th>
                     <th scope="col">Currency</th>
+                    <th scope="col">Priority</th>
                     <th scope="col">Status</th>
                   </tr>
                 </thead>
@@ -43,8 +44,9 @@
                     <tr>
                       <td class="fw-semibold"><%= asset.symbol %></td>
                       <td><%= asset.name %></td>
-                      <td><code><%= asset.id %></code></td>
-                      <td class="text-uppercase"><%= asset.currency %></td>
+                      <td><code><%= asset.coingeckoId %></code></td>
+                      <td class="text-uppercase"><%= asset.vsCurrency %></td>
+                      <td><%= asset.priority %></td>
                       <td>
                         <% if (asset.enabled) { %>
                           <span class="badge text-bg-success">Enabled</span>
@@ -67,10 +69,18 @@
             </div>
             <div class="card-body">
               <dl class="mb-0">
+                <dt>App name</dt>
+                <dd><%= status.appName %></dd>
+                <dt>Runtime</dt>
+                <dd><code><%= status.runtime %></code></dd>
+                <dt>Assets loaded</dt>
+                <dd><%= status.assetsLoaded %></dd>
+                <dt>Config path</dt>
+                <dd><code><%= status.configPath %></code></dd>
+                <dt>Database path</dt>
+                <dd><code><%= status.databasePath %></code></dd>
                 <dt>Health check</dt>
                 <dd><a href="/health">/health</a></dd>
-                <dt>SQLite database</dt>
-                <dd><code><%= databasePath %></code></dd>
                 <dt>Fetching</dt>
                 <dd>Not implemented yet.</dd>
               </dl>

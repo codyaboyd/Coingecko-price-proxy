@@ -1,17 +1,16 @@
-require('dotenv').config();
-
 const { createApp } = require('./src/app');
 const { loadServerConfig } = require('./src/utils/config');
+const logger = require('./src/utils/logger');
 
 const config = loadServerConfig();
 const app = createApp(config);
 
 const server = app.listen(config.port, config.host, () => {
-  console.log(`chrono-cache listening at http://${config.host}:${config.port}`);
+  logger.info(`${config.appName} listening at http://${config.host}:${config.port}`);
 });
 
 function shutdown(signal) {
-  console.log(`${signal} received, shutting down chrono-cache`);
+  logger.info(`${signal} received, shutting down ${config.appName}`);
   server.close(() => {
     process.exit(0);
   });

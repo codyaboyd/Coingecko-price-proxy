@@ -1,25 +1,12 @@
-const { getConfiguredAssets } = require('../src/services/assets');
+const { validateAssetsFile } = require('../src/services/asset-service');
 const { loadServerConfig } = require('../src/utils/config');
-
-function validateAsset(asset, index) {
-  const requiredFields = ['id', 'symbol', 'name', 'currency'];
-  const missing = requiredFields.filter((field) => !asset[field]);
-
-  if (missing.length > 0) {
-    throw new Error(`Asset at index ${index} is missing: ${missing.join(', ')}`);
-  }
-}
+const logger = require('../src/utils/logger');
 
 function main() {
   const config = loadServerConfig();
-  const assets = getConfiguredAssets(config.assetsConfigPath);
+  const assets = validateAssetsFile(config.assetsConfigPath);
 
-  if (assets.length === 0) {
-    throw new Error('No assets are configured.');
-  }
-
-  assets.forEach(validateAsset);
-  console.log(`Validated ${assets.length} configured assets.`);
+  logger.info(`Validated ${assets.length} configured assets from ${config.assetsConfigPath}.`);
 }
 
 try {
