@@ -499,8 +499,168 @@ function convertDumpFile(inputPath, options = {}) {
   return convertDumpText(text, inputPath, options);
 }
 
+const IMPORT_RUN_COLUMNS = [
+  'filename',
+  'asset_id',
+  'vs_currency',
+  'detected_format',
+  'status',
+  'rows_seen',
+  'rows_imported',
+  'error',
+  'created_at'
+];
+
+function isNormalizedHistory(data) {
+  return isPlainObject(data) && Array.isArray(data.candles);
+}
+
+function readNormalizedHistoryFile(inputPath) {
+  if (!inputPath) {
+    throw new Error('A normalized JSON input path is required.');
+  }
+
+  const text = fs.readFileSync(inputPath, 'utf8');
+  const data = JSON.parse(text);
+
+  if (!isNormalizedHistory(data)) {
+    throw new Error('Normalized JSON input must contain a candles array.');
+  }
+
+  return data;
+}
+
+function normalizeImportPolicy(policy) {
+  const { CONFLICT_POLICIES, DEFAULT_CONFLICT_POLICY } = require('./history-service');
+  const normalized = String(policy || DEFAULT_CONFLICT_POLICY).trim().toLowerCase();
+
+  if (!CONFLICT_POLICIES.has(normalized)) {
+    throw new Error(`policy must be one of: ${Array.from(CONFLICT_POLICIES).join(', ')}.`);
+  }
+
+  return normalized;
+}
+
+function recordImportRun(db, run) {
+  const row = {
+    filename: run.filename,
+    asset_id: run.assetId || null,
+    vs_currency: run.vsCurrency || null,
+    detected_format: run.detectedFormat || null,
+    status: run.status,
+    rows_seen: run.rowsSeen || 0,
+    rows_imported: run.rowsImported || 0,
+    error: run.error || null,
+    created_at: run.createdAt || Date.now()
+  };
+
+  const availableColumns = new Set(db.prepare('PRAGMA table_info(import_runs)').all().map((column) => column.name));
+  const columns = IMPORT_RUN_COLUMNS.filter((column) => availableColumns.has(column));
+  const placeholders = columns.map((column) => `@${column}`).join(', ');
+
+  return db.prepare(`
+    INSERT INTO import_runs (${columns.join(', ')})
+    VALUES (${placeholders})
+  `).run(row).lastInsertRowid;
+}
+
+function detectedFormatForNormalized(data) {
+  return data.detectedFormat || data.detected_format || (data.source ? `normalized-json:${data.source}` : 'normalized-json');
+}
+
+function importNormalizedHistoryFile(inputPath, options = {}) {
+  const { insertCandles } = require('./history-service');
+  const data = readNormalizedHistoryFile(inputPath);
+  const db = options.db;
+
+  if (!db) {
+    throw new Error('importNormalizedHistoryFile requires a database connection.');
+  }
+
+  const policy = normalizeImportPolicy(options.policy || options.conflictPolicy || options.conflict_policy);
+  const assetId = normalizeRequiredString(options.assetId || options.asset || data.assetId || data.asset_id, 'assetId');
+  const vsCurrency = normalizeRequiredString(options.vsCurrency || options.vs || data.vsCurrency || data.vs_currency || 'usd', 'vsCurrency');
+  const interval = normalizeRequiredString(options.interval || data.interval || '1d', 'interval');
+  const filename = path.basename(inputPath);
+  const detectedFormat = detectedFormatForNormalized(data);
+  const createdAt = Date.now();
+
+  try {
+    const importCandles = data.candles.map((candle) => ({
+      ...candle,
+      assetId,
+      vsCurrency,
+      interval
+    }));
+    const result = insertCandles(importCandles, {
+      db,
+      assetId,
+      vsCurrency,
+      interval,
+      conflictPolicy: policy,
+      fetchedAt: createdAt
+    });
+
+    const runId = recordImportRun(db, {
+      filename,
+      assetId,
+      vsCurrency,
+      detectedFormat,
+      status: 'success',
+      rowsSeen: result.received,
+      rowsImported: result.changed,
+      createdAt
+    });
+
+    return {
+      runId,
+      filename,
+      assetId,
+      vsCurrency,
+      interval,
+      detectedFormat,
+      status: 'success',
+      rowsSeen: result.received,
+      rowsImported: result.changed,
+      policy
+    };
+  } catch (error) {
+    const runId = recordImportRun(db, {
+      filename,
+      assetId,
+      vsCurrency,
+      detectedFormat,
+      status: 'error',
+      rowsSeen: Array.isArray(data.candles) ? data.candles.length : 0,
+      rowsImported: 0,
+      error: error.message,
+      createdAt
+    });
+
+    error.importRunId = runId;
+    throw error;
+  }
+}
+
+function previewNormalizedHistoryFile(inputPath, limit = 25) {
+  const data = readNormalizedHistoryFile(inputPath);
+  return {
+    assetId: data.assetId || data.asset_id || null,
+    symbol: data.symbol || null,
+    vsCurrency: data.vsCurrency || data.vs_currency || null,
+    interval: data.interval || null,
+    source: data.source || null,
+    detectedFormat: detectedFormatForNormalized(data),
+    rowsSeen: data.candles.length,
+    candles: data.candles.slice(0, limit)
+  };
+}
+
 module.exports = {
   convertDumpFile,
   convertDumpText,
-  parseCsv
+  importNormalizedHistoryFile,
+  parseCsv,
+  previewNormalizedHistoryFile,
+  readNormalizedHistoryFile
 };

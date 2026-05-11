@@ -194,7 +194,10 @@
               Restart required for: <code><%= reloadStatus.lastReload.restartRequiredSettings.join(', ') %></code>
             </div>
           <% } %>
-          <a href="/admin/reload-status" class="btn btn-outline-primary btn-sm">View reload dashboard</a>
+          <div class="d-flex gap-2 flex-wrap">
+            <a href="/admin/reload-status" class="btn btn-outline-primary btn-sm">View reload dashboard</a>
+            <a href="/admin/imports" class="btn btn-primary btn-sm">Open import page</a>
+          </div>
         </div>
       </div>
 
@@ -280,6 +283,7 @@
                     <a class="list-group-item list-group-item-action px-0" href="/api/v1/assets">GET /api/v1/assets</a>
                     <a class="list-group-item list-group-item-action px-0" href="/api/v1/history/btc">GET /api/v1/history/:assetId</a>
                     <a class="list-group-item list-group-item-action px-0" href="/admin/api-test">Admin API test page</a>
+                    <a class="list-group-item list-group-item-action px-0" href="/admin/imports">Admin import page</a>
                   </div>
                 </dd>
                 <dt>Fetching</dt>
