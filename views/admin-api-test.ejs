@@ -189,6 +189,16 @@
         }
       });
 
+      const selectedAsset = new URLSearchParams(window.location.search).get('asset');
+
+      if (selectedAsset) {
+        const matchingOption = Array.from(assetSelect.options).find((option) => option.value === selectedAsset);
+
+        if (matchingOption) {
+          assetSelect.value = selectedAsset;
+        }
+      }
+
       vsInput.placeholder = assetSelect.selectedOptions[0] ? assetSelect.selectedOptions[0].dataset.vs : 'Asset default';
       updateUrl();
     </script>

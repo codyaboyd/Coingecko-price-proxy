@@ -39,6 +39,7 @@
                     <th scope="col">Currency</th>
                     <th scope="col">Priority</th>
                     <th scope="col">Status</th>
+                    <th scope="col">Admin</th>
                     <th scope="col">API</th>
                   </tr>
                 </thead>
@@ -57,6 +58,7 @@
                           <span class="badge text-bg-secondary">Disabled</span>
                         <% } %>
                       </td>
+                      <td><a href="/admin/assets/<%= asset.id %>" class="btn btn-sm btn-primary">Manage</a></td>
                       <td><a href="/api/v1/assets/<%= asset.id %>" class="btn btn-sm btn-outline-primary">JSON</a></td>
                     </tr>
                   <% }) %>
@@ -95,7 +97,7 @@
                   </div>
                 </dd>
                 <dt>Fetching</dt>
-                <dd>Not implemented yet.</dd>
+                <dd>Manual CoinGecko fetching is available from each asset detail page.</dd>
               </dl>
             </div>
           </div>
