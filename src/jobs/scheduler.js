@@ -31,6 +31,7 @@ function cloneJob(job) {
     priority: job.priority,
     status: job.status,
     payload: { ...job.payload },
+    assetPriority: job.assetPriority,
     enqueuedAt: job.enqueuedAt,
     startedAt: job.startedAt,
     finishedAt: job.finishedAt,
@@ -82,6 +83,7 @@ class JobScheduler {
       type,
       priority: PRIORITIES[type],
       payload: { ...payload },
+      assetPriority: Number.isFinite(Number(options.assetPriority)) ? Number(options.assetPriority) : Number.MAX_SAFE_INTEGER,
       status: 'queued',
       enqueuedAt: Date.now(),
       startedAt: null,
@@ -110,8 +112,16 @@ class JobScheduler {
         return left.priority - right.priority;
       }
 
+      if (left.assetPriority !== right.assetPriority) {
+        return left.assetPriority - right.assetPriority;
+      }
+
       return left.sequence - right.sequence;
     });
+  }
+
+  hasPendingJob(predicate) {
+    return this.queue.some(predicate) || Array.from(this.activeJobs.values()).some(predicate);
   }
 
   process() {

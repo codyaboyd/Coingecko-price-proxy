@@ -58,6 +58,95 @@
         </div>
       </div>
 
+      <% if (schedulerAction) { %>
+        <div class="alert alert-info alert-dismissible fade show" role="alert">
+          Scheduler action: <strong><%= schedulerAction %></strong><% if (schedulerDetails) { %> — <%= schedulerDetails %><% } %>
+          <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+        </div>
+      <% } %>
+
+      <div class="card shadow-sm mb-4">
+        <div class="card-header bg-white d-flex align-items-center justify-content-between flex-wrap gap-2">
+          <div>
+            <h2 class="h5 mb-1">Recent refresh scheduler</h2>
+            <p class="text-secondary small mb-0">In-memory automatic refresh for enabled assets only.</p>
+          </div>
+          <% if (recentRefresh.paused) { %>
+            <span class="badge text-bg-warning">Paused</span>
+          <% } else { %>
+            <span class="badge text-bg-success">Running</span>
+          <% } %>
+        </div>
+        <div class="card-body">
+          <div class="row g-3 mb-3">
+            <div class="col-md-3">
+              <p class="text-uppercase text-secondary small fw-semibold mb-1">Enabled assets</p>
+              <p class="h4 mb-0"><%= recentRefresh.configuredAssets %></p>
+            </div>
+            <div class="col-md-3">
+              <p class="text-uppercase text-secondary small fw-semibold mb-1">Runs</p>
+              <p class="h4 mb-0"><%= recentRefresh.runCount %></p>
+            </div>
+            <div class="col-md-3">
+              <p class="text-uppercase text-secondary small fw-semibold mb-1">Last run</p>
+              <p class="mb-0"><%= recentRefresh.lastRunAtIso || 'Never' %></p>
+            </div>
+            <div class="col-md-3">
+              <p class="text-uppercase text-secondary small fw-semibold mb-1">Next run</p>
+              <p class="mb-0"><%= recentRefresh.nextRunAtIso || 'Not scheduled' %></p>
+            </div>
+          </div>
+
+          <% if (recentRefresh.lastError) { %>
+            <div class="alert alert-warning" role="alert"><%= recentRefresh.lastError %></div>
+          <% } %>
+
+          <form class="d-inline" method="post" action="/admin/scheduler/run-now">
+            <button type="submit" class="btn btn-primary">Run refresh now</button>
+          </form>
+          <% if (recentRefresh.paused) { %>
+            <form class="d-inline" method="post" action="/admin/scheduler/resume">
+              <button type="submit" class="btn btn-outline-success">Resume scheduler</button>
+            </form>
+          <% } else { %>
+            <form class="d-inline" method="post" action="/admin/scheduler/pause">
+              <button type="submit" class="btn btn-outline-warning">Pause scheduler</button>
+            </form>
+          <% } %>
+
+          <div class="table-responsive mt-3">
+            <table class="table table-sm align-middle mb-0">
+              <thead>
+                <tr>
+                  <th scope="col">Asset</th>
+                  <th scope="col">Policy</th>
+                  <th scope="col">Intervals</th>
+                  <th scope="col">Last jobs</th>
+                </tr>
+              </thead>
+              <tbody>
+                <% recentRefresh.assets.forEach((assetState) => { %>
+                  <tr>
+                    <td><span class="fw-semibold"><%= assetState.symbol %></span> <code><%= assetState.assetId %></code></td>
+                    <td>
+                      Every <%= assetState.policy.recentEveryMinutes %> min,
+                      daily backfill <%= assetState.policy.dailyBackfill ? 'on' : 'off' %>,
+                      max <%= assetState.policy.maxBackfillDaysPerRun %> day(s)
+                    </td>
+                    <td>
+                      <% Object.entries(assetState.intervals).forEach(([interval, intervalState]) => { %>
+                        <div><code><%= interval %></code> next <%= intervalState.nextRunAt ? new Date(intervalState.nextRunAt).toISOString() : '—' %></div>
+                      <% }) %>
+                    </td>
+                    <td><%= assetState.lastRunJobCount %></td>
+                  </tr>
+                <% }) %>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
       <% if (queue.recentFailures.length > 0) { %>
         <div class="alert alert-warning" role="alert">
           <div class="fw-semibold mb-2">Recent job failures</div>

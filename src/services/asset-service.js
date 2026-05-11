@@ -10,6 +10,42 @@ function isBlankString(value) {
   return typeof value !== 'string' || value.trim().length === 0;
 }
 
+
+function validateFetchPolicy(fetchPolicy, location) {
+  const errors = [];
+
+  if (fetchPolicy === undefined) {
+    return errors;
+  }
+
+  if (!fetchPolicy || typeof fetchPolicy !== 'object' || Array.isArray(fetchPolicy)) {
+    return [`${location}.fetchPolicy must be an object when provided.`];
+  }
+
+  if (
+    Object.prototype.hasOwnProperty.call(fetchPolicy, 'recentEveryMinutes') &&
+    (!Number.isFinite(Number(fetchPolicy.recentEveryMinutes)) || Number(fetchPolicy.recentEveryMinutes) <= 0)
+  ) {
+    errors.push(`${location}.fetchPolicy.recentEveryMinutes must be a positive number.`);
+  }
+
+  if (
+    Object.prototype.hasOwnProperty.call(fetchPolicy, 'dailyBackfill') &&
+    typeof fetchPolicy.dailyBackfill !== 'boolean'
+  ) {
+    errors.push(`${location}.fetchPolicy.dailyBackfill must be true or false.`);
+  }
+
+  if (
+    Object.prototype.hasOwnProperty.call(fetchPolicy, 'maxBackfillDaysPerRun') &&
+    (!Number.isFinite(Number(fetchPolicy.maxBackfillDaysPerRun)) || Number(fetchPolicy.maxBackfillDaysPerRun) <= 0)
+  ) {
+    errors.push(`${location}.fetchPolicy.maxBackfillDaysPerRun must be a positive number.`);
+  }
+
+  return errors;
+}
+
 function validateAsset(asset, index) {
   const location = describeLocation(index);
   const errors = [];
@@ -39,6 +75,8 @@ function validateAsset(asset, index) {
       errors.push(`${location}.priority must be a non-negative integer.`);
     }
   }
+
+  errors.push(...validateFetchPolicy(asset.fetchPolicy, location));
 
   return errors;
 }
@@ -99,6 +137,7 @@ module.exports = {
   loadAssets,
   readAssetConfig,
   validateAsset,
+  validateFetchPolicy,
   validateAssetsFile,
   validateAssetsPayload
 };
