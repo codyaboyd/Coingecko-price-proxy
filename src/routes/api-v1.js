@@ -5,6 +5,13 @@ const { getHistory, SUPPORTED_INTERVALS } = require('../services/history-service
 const { getGapReport } = require('../services/cache-policy');
 const { enqueueBackfill } = require('../jobs/backfill-job');
 const { createScheduler } = require('../jobs/scheduler');
+const {
+  buildHistoryCacheKey,
+  getCachedResponse,
+  getHistoryCacheTtl,
+  isCacheBypassed,
+  setCachedResponse
+} = require('../services/api-cache');
 
 const router = express.Router();
 
@@ -309,7 +316,7 @@ function toCsv(history) {
     .join('\n');
 }
 
-function buildHistoryResponse(req) {
+function parseHistoryRequest(req) {
   const db = getDatabase(req);
   const asset = getPublicAsset(db, req.params.assetId);
 
@@ -332,42 +339,78 @@ function buildHistoryResponse(req) {
 
   validateRange(fromTs, toTs);
 
-  let candles = getHistory(asset.id, {
+  return {
+    asset,
     db,
+    interval,
+    source,
+    format,
+    fill,
+    vsCurrency,
     fromTs,
     toTs,
-    interval,
     limit,
-    vsCurrency
+    cacheKey: buildHistoryCacheKey({
+      assetId: asset.id,
+      from: fromTs,
+      to: toTs,
+      interval,
+      vs: vsCurrency,
+      fill,
+      format,
+      limit
+    })
+  };
+}
+
+function buildHistoryResponse(request) {
+  let candles = getHistory(request.asset.id, {
+    db: request.db,
+    fromTs: request.fromTs,
+    toTs: request.toTs,
+    interval: request.interval,
+    limit: request.limit,
+    vsCurrency: request.vsCurrency
   });
 
-  if (fill === 'previous') {
+  if (request.fill === 'previous') {
     candles = fillWithPrevious(candles, {
-      assetId: asset.id,
-      db,
-      fromTs,
-      toTs,
-      interval,
-      limit,
-      vsCurrency
+      assetId: request.asset.id,
+      db: request.db,
+      fromTs: request.fromTs,
+      toTs: request.toTs,
+      interval: request.interval,
+      limit: request.limit,
+      vsCurrency: request.vsCurrency
     });
   }
 
-  const effectiveRange = getEffectiveRange(candles, fromTs, toTs);
+  const effectiveRange = getEffectiveRange(candles, request.fromTs, request.toTs);
 
   return {
     history: {
-      asset,
-      vsCurrency,
-      interval,
+      asset: request.asset,
+      vsCurrency: request.vsCurrency,
+      interval: request.interval,
       from: effectiveRange.from,
       to: effectiveRange.to,
-      source,
+      source: request.source,
       count: candles.length,
       candles
     },
-    format
+    format: request.format
   };
+}
+
+function sendHistoryResponse(res, payload) {
+  if (payload.format === 'csv') {
+    res.type('text/csv');
+    res.set('Content-Disposition', `attachment; filename="${payload.history.asset.id}-${payload.history.interval}-history.csv"`);
+    res.send(payload.body || toCsv(payload.history));
+    return;
+  }
+
+  res.json(payload.history);
 }
 
 router.get('/health', (req, res) => {
@@ -477,16 +520,36 @@ router.post('/admin/assets/:assetId/backfill', (req, res, next) => {
 
 router.get('/history/:assetId', (req, res, next) => {
   try {
-    const { history, format } = buildHistoryResponse(req);
+    const request = parseHistoryRequest(req);
+    const ttlMs = getHistoryCacheTtl(request.interval);
+    const bypassCache = isCacheBypassed(req.query.cache);
 
-    if (format === 'csv') {
-      res.type('text/csv');
-      res.set('Content-Disposition', `attachment; filename="${history.asset.id}-${history.interval}-history.csv"`);
-      res.send(toCsv(history));
+    if (!bypassCache && ttlMs > 0) {
+      const cached = getCachedResponse(request.db, request.cacheKey);
+
+      if (cached) {
+        res.status(cached.statusCode);
+        res.set('X-API-Cache', 'HIT');
+        sendHistoryResponse(res, JSON.parse(cached.responseJson));
+        return;
+      }
+    }
+
+    const payload = buildHistoryResponse(request);
+
+    if (!bypassCache && ttlMs > 0) {
+      const cachePayload = {
+        ...payload,
+        body: payload.format === 'csv' ? toCsv(payload.history) : null
+      };
+      setCachedResponse(request.db, request.cacheKey, JSON.stringify(cachePayload), ttlMs);
+      res.set('X-API-Cache', 'MISS');
+      sendHistoryResponse(res, cachePayload);
       return;
     }
 
-    res.json(history);
+    res.set('X-API-Cache', 'BYPASS');
+    sendHistoryResponse(res, payload);
   } catch (error) {
     next(error);
   }

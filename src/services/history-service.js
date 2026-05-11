@@ -1,5 +1,6 @@
 const { openDatabase } = require('../db/node-sqlite');
 const { loadServerConfig } = require('../utils/config');
+const { invalidateHistoryCacheForAsset } = require('./api-cache');
 
 const SUPPORTED_INTERVALS = new Set(['5m', '1h', '1d']);
 const CONFLICT_POLICIES = new Set([
@@ -318,9 +319,16 @@ function insertCandles(candles, options = {}) {
     return changed;
   });
 
+  const changed = writeCandles(normalizedCandles);
+
+  if (changed > 0) {
+    Array.from(new Set(normalizedCandles.map((candle) => candle.assetId)))
+      .forEach((assetId) => invalidateHistoryCacheForAsset(db, assetId));
+  }
+
   return {
     received: normalizedCandles.length,
-    changed: writeCandles(normalizedCandles),
+    changed,
     conflictPolicy
   };
 }

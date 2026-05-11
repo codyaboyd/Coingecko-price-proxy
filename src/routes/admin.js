@@ -9,6 +9,7 @@ const { convertDumpFile, importNormalizedHistoryFile, previewNormalizedHistoryFi
 const { ensureDirectory, resolveFromRoot } = require('../utils/files');
 const { createScheduler } = require('../jobs/scheduler');
 const { createRecentRefreshScheduler } = require('../jobs/recent-refresh-scheduler');
+const { clearApiCache, getApiCacheStats } = require('../services/api-cache');
 
 const router = express.Router();
 
@@ -235,6 +236,16 @@ function getRecentRefreshScheduler(req) {
   return scheduler;
 }
 
+function redirectWithCacheAction(res, action, details) {
+  const params = new URLSearchParams({ cacheAction: action });
+
+  if (details) {
+    params.set('cacheDetails', details);
+  }
+
+  res.redirect(`/admin?${params.toString()}`);
+}
+
 function redirectWithSchedulerAction(res, action, details) {
   const params = new URLSearchParams({ schedulerAction: action });
 
@@ -406,6 +417,15 @@ router.get('/assets/:id', (req, res, next) => {
 });
 
 
+router.post('/cache/clear', (req, res, next) => {
+  try {
+    const clearedEntries = clearApiCache(getDatabase(req));
+    redirectWithCacheAction(res, 'cleared', `${clearedEntries} entr${clearedEntries === 1 ? 'y' : 'ies'} removed`);
+  } catch (error) {
+    next(error);
+  }
+});
+
 router.post('/scheduler/pause', (req, res, next) => {
   try {
     getRecentRefreshScheduler(req).pause();
@@ -441,6 +461,7 @@ router.get('/', (req, res, next) => {
 
     const queue = getScheduler(req).getStatus();
     const recentRefresh = getRecentRefreshScheduler(req).getStatus();
+    const cacheStats = getApiCacheStats(getDatabase(req));
 
     res.render('admin', {
       title: config.adminTitle,
@@ -457,6 +478,9 @@ router.get('/', (req, res, next) => {
       },
       schedulerAction: req.query.schedulerAction || null,
       schedulerDetails: req.query.schedulerDetails || null,
+      cacheAction: req.query.cacheAction || null,
+      cacheDetails: req.query.cacheDetails || null,
+      cacheStats,
       reloadStatus: {
         ...reloadStatus,
         lastReloadAtIso: formatTimestamp(reloadStatus.lastReload.at),
