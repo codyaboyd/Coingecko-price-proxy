@@ -74,6 +74,8 @@ Open the app:
 - Admin: <http://127.0.0.1:3000/admin>
 - Health: <http://127.0.0.1:3000/health>
 
+The admin dashboard shows app status, runtime, loaded asset count, asset config path, and database path.
+
 ## Scripts
 
 - `npm start` - run the Express server.
@@ -86,9 +88,11 @@ Open the app:
 
 ## Configuration
 
-- `.env.example` documents supported environment variables.
+- `.env.example` documents supported environment variables, including `APP_NAME`, `LOG_LEVEL`, and path overrides.
 - `config/server.json` contains default server settings.
-- `config/assets.json` contains BTC and ETH examples.
+- `config/assets.json` contains BTC and ETH examples. Each asset must define `id`, `symbol`, `name`, `coingeckoId`, `vsCurrency`, `enabled`, and `priority`.
+- `src/utils/env.js` loads `.env` with `dotenv` and validates required runtime configuration.
+- `src/utils/logger.js` provides simple leveled logging with `debug`, `info`, `warn`, and `error`.
 
 ## Notes
 

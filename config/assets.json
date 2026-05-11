@@ -1,18 +1,22 @@
 {
   "assets": [
     {
-      "id": "bitcoin",
+      "id": "btc",
       "symbol": "BTC",
       "name": "Bitcoin",
+      "coingeckoId": "bitcoin",
+      "vsCurrency": "usd",
       "enabled": true,
-      "currency": "usd"
+      "priority": 10
     },
     {
-      "id": "ethereum",
+      "id": "eth",
       "symbol": "ETH",
       "name": "Ethereum",
+      "coingeckoId": "ethereum",
+      "vsCurrency": "usd",
       "enabled": true,
-      "currency": "usd"
+      "priority": 20
     }
   ]
 }

@@ -1,8 +1,7 @@
-const { readJsonFile } = require('../utils/files');
+const { loadAssets } = require('./asset-service');
 
 function getConfiguredAssets(configPath) {
-  const payload = readJsonFile(configPath);
-  return Array.isArray(payload.assets) ? payload.assets : [];
+  return loadAssets(configPath);
 }
 
 module.exports = { getConfiguredAssets };

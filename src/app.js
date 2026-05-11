@@ -3,6 +3,7 @@ const path = require('path');
 
 const adminRoutes = require('./routes/admin');
 const healthRoutes = require('./routes/health');
+const logger = require('./utils/logger');
 
 function createApp(config) {
   const app = express();
@@ -30,7 +31,7 @@ function createApp(config) {
   });
 
   app.use((err, req, res, next) => {
-    console.error(err);
+    logger.error(err.message, { stack: err.stack });
     res.status(500).render('error', {
       title: 'Server Error',
       message: 'Something went wrong.'
