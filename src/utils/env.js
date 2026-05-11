@@ -58,7 +58,7 @@ function loadEnv(options = {}) {
 
   const configDir = readString('CONFIG_DIR', './config');
   const dataDir = readString('DATA_DIR', './data');
-  const defaultDatabasePath = path.join(dataDir, 'chrono-cache.sqlite');
+  const defaultDatabasePath = path.join(dataDir, 'history.sqlite');
   const defaultAssetsConfigPath = path.join(configDir, 'assets.json');
 
   const env = {
@@ -70,7 +70,7 @@ function loadEnv(options = {}) {
     configDir,
     dataDir,
     logDir: readString('LOG_DIR', './logs'),
-    databasePath: readString('DATABASE_PATH', defaultDatabasePath),
+    databasePath: readString('DB_PATH', readString('DATABASE_PATH', defaultDatabasePath)),
     assetsConfigPath: readString('ASSETS_CONFIG_PATH', defaultAssetsConfigPath),
     logLevel: readString('LOG_LEVEL', 'info').toLowerCase()
   };

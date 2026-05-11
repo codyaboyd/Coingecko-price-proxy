@@ -1,17 +1,24 @@
 const { createApp } = require('./src/app');
+const { initializeDatabase } = require('./src/db');
+const { countAssets } = require('./src/db/queries');
 const { loadServerConfig } = require('./src/utils/config');
 const logger = require('./src/utils/logger');
 
 const config = loadServerConfig();
+const db = initializeDatabase(config);
 const app = createApp(config);
+
+app.set('db', db);
 
 const server = app.listen(config.port, config.host, () => {
   logger.info(`${config.appName} listening at http://${config.host}:${config.port}`);
+  logger.info(`Database ready at ${config.databasePath}; ${countAssets(db)} asset(s) loaded`);
 });
 
 function shutdown(signal) {
   logger.info(`${signal} received, shutting down ${config.appName}`);
   server.close(() => {
+    db.close();
     process.exit(0);
   });
 }
