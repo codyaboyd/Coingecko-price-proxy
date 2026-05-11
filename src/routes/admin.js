@@ -2,14 +2,16 @@ const express = require('express');
 const fs = require('fs');
 const path = require('path');
 
-const { getAssetCandleBounds, getPublicAsset, listFetchRunsForAsset } = require('../db/queries');
-const { loadAssets } = require('../services/asset-service');
-const { CONFLICT_POLICIES, DEFAULT_CONFLICT_POLICY, SUPPORTED_INTERVALS } = require('../services/history-service');
+const { getAssetCandleBounds, getPublicAsset, listFetchRunsForAsset, upsertAssets } = require('../db/queries');
+const { readAssetConfig, validateAssetsPayload, loadAssets } = require('../services/asset-service');
+const { CONFLICT_POLICIES, DEFAULT_CONFLICT_POLICY, SUPPORTED_INTERVALS, countCandles } = require('../services/history-service');
 const { convertDumpFile, importNormalizedHistoryFile, previewNormalizedHistoryFile } = require('../services/import-service');
 const { ensureDirectory, resolveFromRoot } = require('../utils/files');
 const { createScheduler } = require('../jobs/scheduler');
-const { createRecentRefreshScheduler } = require('../jobs/recent-refresh-scheduler');
+const { buildRecentRefreshJobs, createRecentRefreshScheduler, normalizeFetchPolicy } = require('../jobs/recent-refresh-scheduler');
 const { clearApiCache, getApiCacheStats } = require('../services/api-cache');
+const { fetchMarketChartRange } = require('../services/coingecko');
+const { getGapReport } = require('../services/cache-policy');
 
 const router = express.Router();
 
@@ -269,6 +271,143 @@ function formatTimestamp(value) {
 }
 
 
+function parsePositiveIntegerField(value, field) {
+  const parsed = Number(value);
+
+  if (!Number.isInteger(parsed) || parsed < 0) {
+    throw new Error(`${field} must be a non-negative integer.`);
+  }
+
+  return parsed;
+}
+
+function parsePositiveNumberField(value, field) {
+  const parsed = Number(value);
+
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    throw new Error(`${field} must be a positive number.`);
+  }
+
+  return parsed;
+}
+
+function normalizeTextField(value, field) {
+  const normalized = String(value || '').trim();
+
+  if (!normalized) {
+    throw new Error(`${field} must be a non-empty string.`);
+  }
+
+  return normalized;
+}
+
+function normalizeConfigAssetForm(body = {}, currentAsset = {}) {
+  return {
+    ...currentAsset,
+    name: normalizeTextField(body.name, 'name'),
+    symbol: normalizeTextField(body.symbol, 'symbol').toUpperCase(),
+    coingeckoId: normalizeTextField(body.coingeckoId, 'coingeckoId').toLowerCase(),
+    vsCurrency: normalizeTextField(body.vsCurrency, 'vsCurrency').toLowerCase(),
+    enabled: body.enabled === 'on' || body.enabled === 'true' || body.enabled === true,
+    priority: parsePositiveIntegerField(body.priority, 'priority'),
+    fetchPolicy: {
+      ...(currentAsset.fetchPolicy || {}),
+      recentEveryMinutes: parsePositiveNumberField(body.recentEveryMinutes, 'fetchPolicy.recentEveryMinutes'),
+      dailyBackfill: body.dailyBackfill === 'on' || body.dailyBackfill === 'true' || body.dailyBackfill === true,
+      maxBackfillDaysPerRun: parsePositiveNumberField(body.maxBackfillDaysPerRun, 'fetchPolicy.maxBackfillDaysPerRun')
+    }
+  };
+}
+
+function getAssetConfigPath(req) {
+  return resolveFromRoot(req.app.get('config').assetsConfigPath);
+}
+
+function readEditableAssetConfig(req) {
+  const configPath = getAssetConfigPath(req);
+  const payload = readAssetConfig(configPath);
+
+  if (!Array.isArray(payload.assets)) {
+    throw new Error('Asset config must contain an assets array.');
+  }
+
+  return { configPath, payload };
+}
+
+function makeBackupPath(configPath) {
+  const now = new Date();
+  const stamp = now.toISOString().replace(/[:.]/g, '-');
+  return `${configPath}.${stamp}.bak`;
+}
+
+function writeAssetConfigSafely(configPath, payload) {
+  const errors = validateAssetsPayload(payload);
+
+  if (errors.length > 0) {
+    throw new Error(`Invalid asset config:\n${errors.map((error) => `- ${error}`).join('\n')}`);
+  }
+
+  const backupPath = makeBackupPath(configPath);
+  const tempPath = `${configPath}.${process.pid}.${Date.now()}.tmp`;
+  const json = `${JSON.stringify(payload, null, 2)}\n`;
+  const mode = fs.statSync(configPath).mode & 0o777;
+
+  fs.copyFileSync(configPath, backupPath);
+  fs.writeFileSync(tempPath, json, { encoding: 'utf8', mode });
+  fs.renameSync(tempPath, configPath);
+
+  return backupPath;
+}
+
+function reloadAssetsAfterWrite(req, payload) {
+  const db = getDatabase(req);
+  upsertAssets(db, payload.assets);
+  req.app.set('assets', payload.assets);
+
+  const recentRefreshScheduler = req.app.get('recentRefreshScheduler');
+  if (recentRefreshScheduler && typeof recentRefreshScheduler.reloadAssets === 'function') {
+    recentRefreshScheduler.reloadAssets(payload.assets);
+  }
+
+  const hotReloadManager = getHotReloadManager(req);
+  if (hotReloadManager && typeof hotReloadManager.reloadAssetsConfig === 'function') {
+    hotReloadManager.reloadAssetsConfig();
+  }
+}
+
+function findConfiguredAsset(req, assetId) {
+  return getConfiguredAssets(req).find((asset) => asset.id === assetId) || null;
+}
+
+function buildDefaultAdminRange() {
+  const now = Date.now();
+  return {
+    from: new Date(now - (2 * 24 * 60 * 60 * 1000)).toISOString(),
+    to: new Date(now).toISOString(),
+    interval: '1h'
+  };
+}
+
+function getAdminRangeQuery(req, asset) {
+  const defaults = buildDefaultAdminRange();
+  return {
+    from: req.query.from || defaults.from,
+    to: req.query.to || defaults.to,
+    interval: req.query.interval || defaults.interval,
+    vsCurrency: req.query.vsCurrency || req.query.vs || asset.vsCurrency
+  };
+}
+
+function parseDateForAdminAction(value, field) {
+  const timestamp = Date.parse(String(value || ''));
+
+  if (!Number.isFinite(timestamp)) {
+    throw new Error(`${field} must be a valid date or ISO timestamp.`);
+  }
+
+  return timestamp;
+}
+
 router.get('/imports', (req, res, next) => {
   try {
     renderImportsPage(req, res);
@@ -376,6 +515,199 @@ router.get('/reload-status', (req, res, next) => {
           updatedAtIso: formatTimestamp(candidate.updatedAt)
         }))
       }
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.get('/assets', (req, res, next) => {
+  try {
+    const config = req.app.get('config');
+    const db = getDatabase(req);
+    const assets = getConfiguredAssets(req).map((asset) => {
+      const bounds = getAssetCandleBounds(db, asset.id);
+
+      return {
+        ...asset,
+        earliestIso: formatTimestamp(bounds.earliest_ts),
+        latestIso: formatTimestamp(bounds.latest_ts)
+      };
+    });
+
+    res.render('admin-assets', {
+      title: `${config.adminTitle} - Assets`,
+      appName: config.appName,
+      assets,
+      alert: req.query.alert || null,
+      message: req.query.message || null
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.get('/assets/:id/edit', (req, res, next) => {
+  try {
+    const config = req.app.get('config');
+    const asset = findConfiguredAsset(req, req.params.id);
+
+    if (!asset) {
+      const error = new Error(`Asset '${req.params.id}' was not found.`);
+      error.status = 404;
+      next(error);
+      return;
+    }
+
+    const range = getAdminRangeQuery(req, asset);
+
+    res.render('admin-asset-edit', {
+      title: `${config.adminTitle} - Edit ${asset.symbol}`,
+      appName: config.appName,
+      asset,
+      range,
+      intervals: Array.from(SUPPORTED_INTERVALS),
+      alert: req.query.alert || null,
+      message: req.query.message || null
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.post('/assets/:id/edit', (req, res, next) => {
+  try {
+    const { configPath, payload } = readEditableAssetConfig(req);
+    const index = payload.assets.findIndex((asset) => asset.id === req.params.id);
+
+    if (index === -1) {
+      const error = new Error(`Asset '${req.params.id}' was not found.`);
+      error.status = 404;
+      next(error);
+      return;
+    }
+
+    payload.assets[index] = normalizeConfigAssetForm(req.body, payload.assets[index]);
+    const backupPath = writeAssetConfigSafely(configPath, payload);
+    reloadAssetsAfterWrite(req, payload);
+
+    const params = new URLSearchParams({
+      alert: 'success',
+      message: `Saved ${payload.assets[index].symbol}. Backup: ${path.relative(process.cwd(), backupPath)}`
+    });
+    res.redirect(`/admin/assets/${encodeURIComponent(req.params.id)}/edit?${params.toString()}`);
+  } catch (error) {
+    const params = new URLSearchParams({
+      alert: 'danger',
+      message: error.message
+    });
+    res.redirect(`/admin/assets/${encodeURIComponent(req.params.id)}/edit?${params.toString()}`);
+  }
+});
+
+router.post('/assets/:id/test/coingecko', async (req, res, next) => {
+  try {
+    const asset = findConfiguredAsset(req, req.params.id);
+
+    if (!asset) {
+      const error = new Error(`Asset '${req.params.id}' was not found.`);
+      error.status = 404;
+      next(error);
+      return;
+    }
+
+    const range = getAdminRangeQuery(req, asset);
+    const fromTs = parseDateForAdminAction(range.from, 'from');
+    const toTs = parseDateForAdminAction(range.to, 'to');
+    const response = await fetchMarketChartRange(asset.coingeckoId, range.vsCurrency, fromTs, toTs);
+
+    res.json({
+      ok: true,
+      asset: { id: asset.id, symbol: asset.symbol, coingeckoId: asset.coingeckoId },
+      range,
+      sampleCounts: {
+        prices: Array.isArray(response.prices) ? response.prices.length : 0,
+        marketCaps: Array.isArray(response.market_caps) ? response.market_caps.length : 0,
+        totalVolumes: Array.isArray(response.total_volumes) ? response.total_volumes.length : 0
+      }
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.get('/assets/:id/test/local-history', (req, res, next) => {
+  try {
+    const asset = findConfiguredAsset(req, req.params.id);
+
+    if (!asset) {
+      const error = new Error(`Asset '${req.params.id}' was not found.`);
+      error.status = 404;
+      next(error);
+      return;
+    }
+
+    const range = getAdminRangeQuery(req, asset);
+    const candleCount = countCandles(asset.id, range.vsCurrency, range.interval, { db: getDatabase(req) });
+    const bounds = getAssetCandleBounds(getDatabase(req), asset.id);
+
+    res.json({
+      ok: true,
+      asset: { id: asset.id, symbol: asset.symbol },
+      range,
+      candleCount,
+      earliestCandle: formatTimestamp(bounds.earliest_ts),
+      latestCandle: formatTimestamp(bounds.latest_ts)
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.get('/assets/:id/test/gap-report', (req, res, next) => {
+  try {
+    const asset = findConfiguredAsset(req, req.params.id);
+
+    if (!asset) {
+      const error = new Error(`Asset '${req.params.id}' was not found.`);
+      error.status = 404;
+      next(error);
+      return;
+    }
+
+    const range = getAdminRangeQuery(req, asset);
+    const fromTs = parseDateForAdminAction(range.from, 'from');
+    const toTs = parseDateForAdminAction(range.to, 'to');
+    const report = getGapReport(asset.id, range.vsCurrency, range.interval, fromTs, toTs, { db: getDatabase(req) });
+
+    res.json({ ok: true, asset: { id: asset.id, symbol: asset.symbol }, range, gapReport: report });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.post('/assets/:id/test/fetch-recent', (req, res, next) => {
+  try {
+    const asset = findConfiguredAsset(req, req.params.id);
+
+    if (!asset) {
+      const error = new Error(`Asset '${req.params.id}' was not found.`);
+      error.status = 404;
+      next(error);
+      return;
+    }
+
+    const scheduler = getScheduler(req);
+    const policy = normalizeFetchPolicy(asset);
+    const jobs = policy.intervals.flatMap((interval) => buildRecentRefreshJobs(getDatabase(req), asset, interval, policy, Date.now()));
+    const enqueuedJobs = jobs.map((payload) => scheduler.enqueue('recent_refresh', payload, { assetPriority: asset.priority }));
+
+    res.status(202).json({
+      ok: true,
+      asset: { id: asset.id, symbol: asset.symbol },
+      policy,
+      enqueuedJobs,
+      queue: scheduler.getStatus()
     });
   } catch (error) {
     next(error);
