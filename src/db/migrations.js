@@ -92,6 +92,17 @@ const MIGRATIONS = [
       ALTER TABLE fetch_runs ADD COLUMN error TEXT;
       ALTER TABLE fetch_runs ADD COLUMN finished_at INTEGER;
     `
+  },
+  {
+    version: 4,
+    name: 'add_import_run_audit_columns',
+    up: `
+      ALTER TABLE import_runs ADD COLUMN filename TEXT;
+      ALTER TABLE import_runs ADD COLUMN vs_currency TEXT;
+      ALTER TABLE import_runs ADD COLUMN detected_format TEXT;
+      ALTER TABLE import_runs ADD COLUMN rows_seen INTEGER NOT NULL DEFAULT 0;
+      ALTER TABLE import_runs ADD COLUMN error TEXT;
+    `
   }
 ];
 

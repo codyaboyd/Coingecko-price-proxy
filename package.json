@@ -9,7 +9,7 @@
     "dev": "nodemon server.js",
     "migrate": "node scripts/migrate.js",
     "validate-assets": "node scripts/validate-assets.js",
-    "import": "node scripts/import.js",
+    "import": "node scripts/import-history.js",
     "convert": "node scripts/convert.js",
     "backup": "node scripts/backup.js",
     "seed:fake-btc": "node scripts/seed-fake-btc-candles.js",

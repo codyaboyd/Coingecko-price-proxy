@@ -2,7 +2,13 @@ const { openDatabase } = require('../db/node-sqlite');
 const { loadServerConfig } = require('../utils/config');
 
 const SUPPORTED_INTERVALS = new Set(['5m', '1h', '1d']);
-const CONFLICT_POLICIES = new Set(['skip_existing', 'overwrite_existing', 'fill_only_missing']);
+const CONFLICT_POLICIES = new Set([
+  'skip_existing',
+  'overwrite_existing',
+  'fill_only_missing',
+  'prefer_import_if_older',
+  'prefer_coingecko_if_newer'
+]);
 const DEFAULT_VS_CURRENCY = 'usd';
 const DEFAULT_INTERVAL = '1d';
 const DEFAULT_CONFLICT_POLICY = 'fill_only_missing';
@@ -214,6 +220,36 @@ function buildInsertStatement(db, conflictPolicy) {
         volume = excluded.volume,
         market_cap = excluded.market_cap,
         fetched_at = excluded.fetched_at
+    `);
+  }
+
+  if (conflictPolicy === 'prefer_import_if_older') {
+    return db.prepare(`
+      ${baseSql}
+      ON CONFLICT(asset_id, vs_currency, interval, ts) DO UPDATE SET
+        open = excluded.open,
+        high = excluded.high,
+        low = excluded.low,
+        close = excluded.close,
+        volume = excluded.volume,
+        market_cap = excluded.market_cap,
+        fetched_at = excluded.fetched_at
+      WHERE excluded.fetched_at < candles.fetched_at
+    `);
+  }
+
+  if (conflictPolicy === 'prefer_coingecko_if_newer') {
+    return db.prepare(`
+      ${baseSql}
+      ON CONFLICT(asset_id, vs_currency, interval, ts) DO UPDATE SET
+        open = excluded.open,
+        high = excluded.high,
+        low = excluded.low,
+        close = excluded.close,
+        volume = excluded.volume,
+        market_cap = excluded.market_cap,
+        fetched_at = excluded.fetched_at
+      WHERE candles.fetched_at <= excluded.fetched_at
     `);
   }
 

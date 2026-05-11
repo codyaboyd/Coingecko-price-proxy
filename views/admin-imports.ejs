@@ -1,0 +1,179 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title><%= title %></title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="/public/css/app.css" rel="stylesheet">
+  </head>
+  <body>
+    <nav class="navbar navbar-expand-lg navbar-dark bg-dark">
+      <div class="container-fluid">
+        <a class="navbar-brand" href="/admin"><%= appName %></a>
+        <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#adminNavbar" aria-controls="adminNavbar" aria-expanded="false" aria-label="Toggle navigation">
+          <span class="navbar-toggler-icon"></span>
+        </button>
+        <div class="collapse navbar-collapse" id="adminNavbar">
+          <ul class="navbar-nav me-auto mb-2 mb-lg-0">
+            <li class="nav-item"><a class="nav-link" href="/admin">Dashboard</a></li>
+            <li class="nav-item"><a class="nav-link active" aria-current="page" href="/admin/imports">Imports</a></li>
+            <li class="nav-item"><a class="nav-link" href="/admin/api-test">API test</a></li>
+            <li class="nav-item"><a class="nav-link" href="/admin/reload-status">Reload status</a></li>
+          </ul>
+        </div>
+      </div>
+    </nav>
+
+    <main class="container py-4">
+      <div class="d-flex justify-content-between align-items-start flex-wrap gap-3 mb-4">
+        <div>
+          <h1 class="mb-1">Import history</h1>
+          <p class="text-secondary mb-0">Preview files in <code>data/imports</code>, convert raw dumps, and import normalized candles into SQLite.</p>
+        </div>
+        <a href="/admin" class="btn btn-outline-secondary">Back to dashboard</a>
+      </div>
+
+      <% if (error) { %>
+        <div class="alert alert-danger" role="alert"><%= error %></div>
+      <% } %>
+      <% if (previewError) { %>
+        <div class="alert alert-warning" role="alert">Preview failed: <%= previewError %></div>
+      <% } %>
+      <% if (result) { %>
+        <div class="alert alert-success" role="alert">
+          <div class="fw-semibold">Import run #<%= result.runId %> completed.</div>
+          <div><%= result.rowsImported %> row change(s) from <%= result.rowsSeen %> row(s) seen using <code><%= result.policy %></code>.</div>
+          <div>Normalized file: <code><%= result.normalizedFile %></code></div>
+          <% if (result.conversionReport) { %>
+            <div>Converted <%= result.conversionReport.rowsConverted %> row(s); skipped <%= result.conversionReport.rowsSkipped %>; detected <code><%= result.conversionReport.detectedFormat %></code>.</div>
+          <% } %>
+        </div>
+      <% } %>
+
+      <div class="row g-4">
+        <section class="col-lg-4">
+          <div class="card shadow-sm mb-4">
+            <div class="card-header bg-white">
+              <h2 class="h5 mb-0">Pending files</h2>
+            </div>
+            <div class="list-group list-group-flush">
+              <% if (files.length === 0) { %>
+                <div class="list-group-item text-secondary">No files found in <code>data/imports</code>.</div>
+              <% } %>
+              <% files.forEach((file) => { %>
+                <a class="list-group-item list-group-item-action <%= file.name === selectedFile ? 'active' : '' %>" href="/admin/imports?file=<%= encodeURIComponent(file.name) %>&asset=<%= encodeURIComponent(selectedAssetId) %>&interval=<%= encodeURIComponent(selectedInterval) %>&policy=<%= encodeURIComponent(selectedPolicy) %>">
+                  <div class="d-flex w-100 justify-content-between gap-2">
+                    <span class="text-break"><%= file.name %></span>
+                    <small><%= file.size %> B</small>
+                  </div>
+                  <small class="<%= file.name === selectedFile ? 'text-white-50' : 'text-secondary' %>"><%= file.updatedAtIso %></small>
+                </a>
+              <% }) %>
+            </div>
+          </div>
+        </section>
+
+        <section class="col-lg-8">
+          <div class="card shadow-sm mb-4">
+            <div class="card-header bg-white">
+              <h2 class="h5 mb-0">Convert and import</h2>
+            </div>
+            <div class="card-body">
+              <form method="post" action="/admin/imports/run" class="row g-3">
+                <div class="col-12">
+                  <label class="form-label" for="file">Import file</label>
+                  <select class="form-select" id="file" name="file" required>
+                    <% files.forEach((file) => { %>
+                      <option value="<%= file.name %>" <%= file.name === selectedFile ? 'selected' : '' %>><%= file.name %></option>
+                    <% }) %>
+                  </select>
+                </div>
+                <div class="col-md-4">
+                  <label class="form-label" for="assetId">Asset</label>
+                  <select class="form-select" id="assetId" name="assetId" required>
+                    <% assets.forEach((asset) => { %>
+                      <option value="<%= asset.id %>" <%= asset.id === selectedAssetId ? 'selected' : '' %>><%= asset.symbol %> — <%= asset.id %></option>
+                    <% }) %>
+                  </select>
+                </div>
+                <div class="col-md-4">
+                  <label class="form-label" for="interval">Interval</label>
+                  <select class="form-select" id="interval" name="interval" required>
+                    <% intervals.forEach((interval) => { %>
+                      <option value="<%= interval %>" <%= interval === selectedInterval ? 'selected' : '' %>><%= interval %></option>
+                    <% }) %>
+                  </select>
+                </div>
+                <div class="col-md-4">
+                  <label class="form-label" for="policy">Conflict policy</label>
+                  <select class="form-select" id="policy" name="policy" required>
+                    <% policies.forEach((policy) => { %>
+                      <option value="<%= policy %>" <%= policy === selectedPolicy ? 'selected' : '' %>><%= policy %></option>
+                    <% }) %>
+                  </select>
+                </div>
+                <div class="col-12 d-flex gap-2">
+                  <button type="submit" class="btn btn-primary" <%= files.length === 0 ? 'disabled' : '' %>>Run conversion/import</button>
+                  <% if (selectedFile) { %>
+                    <a class="btn btn-outline-secondary" href="/admin/imports?file=<%= encodeURIComponent(selectedFile) %>&asset=<%= encodeURIComponent(selectedAssetId) %>&interval=<%= encodeURIComponent(selectedInterval) %>&policy=<%= encodeURIComponent(selectedPolicy) %>">Refresh preview</a>
+                  <% } %>
+                </div>
+              </form>
+            </div>
+          </div>
+
+          <div class="card shadow-sm">
+            <div class="card-header bg-white d-flex justify-content-between align-items-center flex-wrap gap-2">
+              <h2 class="h5 mb-0">Preview first 25 rows</h2>
+              <% if (preview) { %>
+                <span class="badge text-bg-secondary"><%= preview.rowsSeen %> row(s), <%= preview.detectedFormat %></span>
+              <% } %>
+            </div>
+            <div class="card-body">
+              <% if (!preview) { %>
+                <p class="text-secondary mb-0">Choose a pending file to preview import rows.</p>
+              <% } else { %>
+                <dl class="row small mb-3">
+                  <dt class="col-sm-3">Asset</dt><dd class="col-sm-9"><code><%= preview.assetId || selectedAssetId %></code></dd>
+                  <dt class="col-sm-3">Currency</dt><dd class="col-sm-9"><code><%= preview.vsCurrency || 'usd' %></code></dd>
+                  <dt class="col-sm-3">Interval</dt><dd class="col-sm-9"><code><%= preview.interval || selectedInterval %></code></dd>
+                </dl>
+                <div class="table-responsive">
+                  <table class="table table-sm table-striped align-middle mb-0">
+                    <thead>
+                      <tr>
+                        <th>Timestamp</th>
+                        <th>Open</th>
+                        <th>High</th>
+                        <th>Low</th>
+                        <th>Close</th>
+                        <th>Volume</th>
+                        <th>Market cap</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <% preview.candles.forEach((candle) => { %>
+                        <tr>
+                          <td><code><%= candle.ts %></code><br><small class="text-secondary"><%= new Date(candle.ts).toISOString() %></small></td>
+                          <td><%= candle.open === null || candle.open === undefined ? '—' : candle.open %></td>
+                          <td><%= candle.high === null || candle.high === undefined ? '—' : candle.high %></td>
+                          <td><%= candle.low === null || candle.low === undefined ? '—' : candle.low %></td>
+                          <td><%= candle.close %></td>
+                          <td><%= candle.volume === null || candle.volume === undefined ? '—' : candle.volume %></td>
+                          <td><%= candle.marketCap === null || candle.marketCap === undefined ? '—' : candle.marketCap %></td>
+                        </tr>
+                      <% }) %>
+                    </tbody>
+                  </table>
+                </div>
+              <% } %>
+            </div>
+          </div>
+        </section>
+      </div>
+    </main>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+  </body>
+</html>
