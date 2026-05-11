@@ -57,10 +57,34 @@ logs/
 
 ## Running the app
 
-Start the server:
+Start the server directly:
 
 ```bash
 npm start
+```
+
+For production-friendly single-command startup, use the included shell script:
+
+```bash
+./start.sh
+```
+
+The startup script creates `logs`, `data`, `imports`, `exports`, and `backups` when needed, installs dependencies if `node_modules` is missing, runs migrations, validates assets, and starts the app in a Linux `screen` session named `chrono-cache`. Node.js is preferred by default; set `USE_BUN=1` to prefer Bun when it is available.
+
+After startup, attach to the running session or stream the server log with:
+
+```bash
+screen -r chrono-cache
+tail -f logs/server.log
+```
+
+If the `chrono-cache` screen session already exists, `./start.sh` prints the attach and log commands without starting a duplicate app instance.
+
+Stop or restart the managed screen session with:
+
+```bash
+./stop.sh
+./restart.sh
 ```
 
 For development with automatic restarts:
@@ -78,7 +102,10 @@ The admin dashboard shows app status, runtime, loaded asset count, asset config 
 
 ## Scripts
 
-- `npm start` - run the Express server.
+- `./start.sh` - prepare runtime directories, install dependencies when needed, run migrations, validate assets, and start the app in the `chrono-cache` screen session with logs written to `logs/server.log`.
+- `./stop.sh` - safely stop the `chrono-cache` screen session.
+- `./restart.sh` - stop and then start the managed `chrono-cache` screen session.
+- `npm start` - run the Express server directly.
 - `npm run dev` - run the server with `nodemon`.
 - `npm run migrate` - create the initial SQLite schema.
 - `npm run validate-assets` - validate `config/assets.json`.
