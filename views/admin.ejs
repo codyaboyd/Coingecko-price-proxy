@@ -37,6 +37,7 @@
                     <th scope="col">Currency</th>
                     <th scope="col">Priority</th>
                     <th scope="col">Status</th>
+                    <th scope="col">API</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -54,6 +55,7 @@
                           <span class="badge text-bg-secondary">Disabled</span>
                         <% } %>
                       </td>
+                      <td><a href="/api/v1/assets/<%= asset.id %>" class="btn btn-sm btn-outline-primary">JSON</a></td>
                     </tr>
                   <% }) %>
                 </tbody>
@@ -81,6 +83,13 @@
                 <dd><code><%= status.databasePath %></code></dd>
                 <dt>Health check</dt>
                 <dd><a href="/health">/health</a></dd>
+                <dt>Public API</dt>
+                <dd>
+                  <div class="list-group list-group-flush">
+                    <a class="list-group-item list-group-item-action px-0" href="/api/v1/health">GET /api/v1/health</a>
+                    <a class="list-group-item list-group-item-action px-0" href="/api/v1/assets">GET /api/v1/assets</a>
+                  </div>
+                </dd>
                 <dt>Fetching</dt>
                 <dd>Not implemented yet.</dd>
               </dl>
