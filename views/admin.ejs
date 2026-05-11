@@ -66,6 +66,13 @@
         </div>
       <% } %>
 
+      <% if (cacheAction) { %>
+        <div class="alert alert-info alert-dismissible fade show" role="alert">
+          Cache action: <strong><%= cacheAction %></strong><% if (cacheDetails) { %> — <%= cacheDetails %><% } %>
+          <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+        </div>
+      <% } %>
+
       <div class="card shadow-sm mb-4">
         <div class="card-header bg-white d-flex align-items-center justify-content-between flex-wrap gap-2">
           <div>
@@ -197,6 +204,30 @@
           <div class="d-flex gap-2 flex-wrap">
             <a href="/admin/reload-status" class="btn btn-outline-primary btn-sm">View reload dashboard</a>
             <a href="/admin/imports" class="btn btn-primary btn-sm">Open import page</a>
+          </div>
+        </div>
+      </div>
+
+      <div class="card shadow-sm mb-4">
+        <div class="card-header bg-white d-flex align-items-center justify-content-between flex-wrap gap-2">
+          <div>
+            <h2 class="h5 mb-1">API response cache</h2>
+            <p class="text-secondary small mb-0">Local cache for GET /api/v1/history/:assetId responses.</p>
+          </div>
+          <form method="post" action="/admin/cache/clear" class="m-0">
+            <button type="submit" class="btn btn-outline-danger btn-sm">Clear cache</button>
+          </form>
+        </div>
+        <div class="card-body">
+          <div class="row g-3">
+            <div class="col-sm-6">
+              <p class="text-uppercase text-secondary small fw-semibold mb-1">Active cache entries</p>
+              <p class="display-6 mb-0"><%= cacheStats.activeEntries %></p>
+            </div>
+            <div class="col-sm-6">
+              <p class="text-uppercase text-secondary small fw-semibold mb-1">Expired cache entries</p>
+              <p class="display-6 mb-0"><%= cacheStats.expiredEntries %></p>
+            </div>
           </div>
         </div>
       </div>
