@@ -11,7 +11,9 @@
     "validate-assets": "node scripts/validate-assets.js",
     "import": "node scripts/import.js",
     "convert": "node scripts/convert.js",
-    "backup": "node scripts/backup.js"
+    "backup": "node scripts/backup.js",
+    "seed:fake-btc": "node scripts/seed-fake-btc-candles.js",
+    "verify:history": "node scripts/verify-history-service.js"
   },
   "keywords": [
     "cache",
