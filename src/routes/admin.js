@@ -3,6 +3,7 @@ const express = require('express');
 const { getAssetCandleBounds, getPublicAsset, listFetchRunsForAsset } = require('../db/queries');
 const { loadAssets } = require('../services/asset-service');
 const { resolveFromRoot } = require('../utils/files');
+const { createScheduler } = require('../jobs/scheduler');
 
 const router = express.Router();
 
@@ -17,6 +18,25 @@ function getDatabase(req) {
   }
 
   return db;
+}
+
+function getScheduler(req) {
+  let scheduler = req.app.get('jobScheduler');
+
+  if (!scheduler) {
+    scheduler = createScheduler({ db: getDatabase(req) });
+    req.app.set('jobScheduler', scheduler);
+  }
+
+  return scheduler;
+}
+
+function formatJobLabel(job) {
+  if (!job) {
+    return 'None';
+  }
+
+  return `#${job.id} ${job.type} (${job.payload.assetId || 'n/a'})`;
 }
 
 function formatTimestamp(value) {
@@ -78,9 +98,15 @@ router.get('/', (req, res, next) => {
     const config = req.app.get('config');
     const assets = loadAssets(config.assetsConfigPath);
 
+    const queue = getScheduler(req).getStatus();
+
     res.render('admin', {
       title: config.adminTitle,
       assets,
+      queue: {
+        ...queue,
+        activeJobLabel: formatJobLabel(queue.activeJob)
+      },
       status: {
         appName: config.appName,
         runtime: `Node.js ${process.version} (${config.nodeEnv})`,

@@ -23,6 +23,52 @@
         <p class="lead mb-0">Server-rendered admin shell for cache configuration and future price data operations.</p>
       </div>
 
+      <div class="row g-3 mb-4">
+        <div class="col-sm-6 col-xl-3">
+          <div class="card shadow-sm h-100">
+            <div class="card-body">
+              <p class="text-uppercase text-secondary small fw-semibold mb-1">Queue depth</p>
+              <p class="display-6 mb-0"><%= queue.depth %></p>
+            </div>
+          </div>
+        </div>
+        <div class="col-sm-6 col-xl-3">
+          <div class="card shadow-sm h-100">
+            <div class="card-body">
+              <p class="text-uppercase text-secondary small fw-semibold mb-1">Active job</p>
+              <p class="h6 mb-0 text-truncate" title="<%= queue.activeJobLabel %>"><%= queue.activeJobLabel %></p>
+            </div>
+          </div>
+        </div>
+        <div class="col-sm-6 col-xl-3">
+          <div class="card shadow-sm h-100">
+            <div class="card-body">
+              <p class="text-uppercase text-secondary small fw-semibold mb-1">Recent failures</p>
+              <p class="display-6 mb-0"><%= queue.recentFailures.length %></p>
+            </div>
+          </div>
+        </div>
+        <div class="col-sm-6 col-xl-3">
+          <div class="card shadow-sm h-100">
+            <div class="card-body">
+              <p class="text-uppercase text-secondary small fw-semibold mb-1">Calls used this minute</p>
+              <p class="display-6 mb-0"><%= queue.callsUsedThisMinute === null ? '—' : queue.callsUsedThisMinute %></p>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <% if (queue.recentFailures.length > 0) { %>
+        <div class="alert alert-warning" role="alert">
+          <div class="fw-semibold mb-2">Recent job failures</div>
+          <ul class="mb-0">
+            <% queue.recentFailures.forEach((job) => { %>
+              <li><code>#<%= job.id %></code> <%= job.type %> for <%= job.payload.assetId || 'n/a' %>: <%= job.error %></li>
+            <% }) %>
+          </ul>
+        </div>
+      <% } %>
+
       <div class="row g-4">
         <section class="col-lg-8">
           <div class="card shadow-sm">
@@ -97,7 +143,7 @@
                   </div>
                 </dd>
                 <dt>Fetching</dt>
-                <dd>Manual CoinGecko fetching is available from each asset detail page.</dd>
+                <dd>Manual fetches and backfills are processed by the in-process job queue.</dd>
               </dl>
             </div>
           </div>

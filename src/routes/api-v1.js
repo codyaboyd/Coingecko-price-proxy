@@ -3,7 +3,8 @@ const express = require('express');
 const { getPublicAsset, listPublicAssets } = require('../db/queries');
 const { getHistory, SUPPORTED_INTERVALS } = require('../services/history-service');
 const { getGapReport } = require('../services/cache-policy');
-const { runManualFetch } = require('../services/manual-fetch-service');
+const { enqueueBackfill } = require('../jobs/backfill-job');
+const { createScheduler } = require('../jobs/scheduler');
 
 const router = express.Router();
 
@@ -29,6 +30,17 @@ function getDatabase(req) {
   }
 
   return db;
+}
+
+function getScheduler(req) {
+  let scheduler = req.app.get('jobScheduler');
+
+  if (!scheduler) {
+    scheduler = createScheduler({ db: getDatabase(req) });
+    req.app.set('jobScheduler', scheduler);
+  }
+
+  return scheduler;
 }
 
 function createApiError(status, code, message, details) {
@@ -420,17 +432,43 @@ router.get('/admin/assets/:assetId/gaps', (req, res, next) => {
   }
 });
 
-router.post('/admin/assets/:assetId/fetch', async (req, res, next) => {
+router.post('/admin/assets/:assetId/fetch', (req, res, next) => {
   try {
-    const result = await runManualFetch(getDatabase(req), req.params.assetId, req.body);
+    const db = getDatabase(req);
+    const asset = getPublicAsset(db, req.params.assetId);
 
-    res.status(201).json({
-      fetchRun: result.run,
+    if (!asset) {
+      next(createNotFoundError(req.params.assetId));
+      return;
+    }
+
+    const scheduler = getScheduler(req);
+    const job = scheduler.enqueue('manual_admin_fetch', {
+      assetId: asset.id,
+      from: req.body.from,
+      to: req.body.to,
+      interval: req.body.interval,
+      vsCurrency: req.body.vsCurrency,
+      conflictPolicy: req.body.conflictPolicy
+    });
+
+    res.status(202).json({ job, queue: scheduler.getStatus() });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.post('/admin/assets/:assetId/backfill', (req, res, next) => {
+  try {
+    const result = enqueueBackfill(getDatabase(req), getScheduler(req), req.params.assetId, req.body);
+
+    res.status(202).json({
       asset: result.asset,
-      candlesNormalized: result.candlesNormalized,
-      candlesChanged: result.candlesChanged,
-      conflictPolicy: result.conflictPolicy,
-      totalCandles: result.totalCandles
+      request: result.request,
+      gaps: result.gaps,
+      chunks: result.chunks,
+      enqueuedJobs: result.enqueuedJobs,
+      queue: getScheduler(req).getStatus()
     });
   } catch (error) {
     next(error);
