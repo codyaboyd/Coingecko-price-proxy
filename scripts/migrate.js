@@ -1,22 +1,28 @@
 require('dotenv').config();
 
-const { openDatabase } = require('../src/db/connection');
+const { openDatabase } = require('../src/db/node-sqlite');
 const { runMigrations } = require('../src/db/migrations');
 const { loadServerConfig } = require('../src/utils/config');
-const { ensureDirectory } = require('../src/utils/files');
 
-async function main() {
+function main() {
   const config = loadServerConfig();
-  ensureDirectory('data');
+  const db = openDatabase(config.databasePath);
 
-  const db = await openDatabase(config.databasePath);
-  await runMigrations(db);
-  await db.close();
+  try {
+    const appliedMigrations = runMigrations(db);
+    const suffix = appliedMigrations.length === 0
+      ? 'no pending migrations'
+      : `${appliedMigrations.length} migration(s) applied`;
 
-  console.log(`Migrations completed for ${config.databasePath}`);
+    console.log(`Migrations completed for ${config.databasePath}: ${suffix}`);
+  } finally {
+    db.close();
+  }
 }
 
-main().catch((error) => {
+try {
+  main();
+} catch (error) {
   console.error(error);
   process.exit(1);
-});
+}

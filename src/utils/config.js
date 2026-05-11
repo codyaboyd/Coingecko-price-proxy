@@ -27,7 +27,7 @@ function loadServerConfig() {
     dataDir: env.dataDir,
     logDir: env.logDir,
     logLevel: env.logLevel,
-    databasePath: process.env.DATABASE_PATH || fileConfig.databasePath || env.databasePath,
+    databasePath: process.env.DB_PATH || process.env.DATABASE_PATH || fileConfig.databasePath || env.databasePath,
     assetsConfigPath: process.env.ASSETS_CONFIG_PATH || fileConfig.assetsConfigPath || env.assetsConfigPath
   };
 }
