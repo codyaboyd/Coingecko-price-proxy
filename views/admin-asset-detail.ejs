@@ -122,13 +122,30 @@
                   </div>
                 </div>
 
-                <div>
+                <div class="d-flex flex-wrap align-items-center gap-2">
+                  <button type="button" id="checkExistingButton" class="btn btn-outline-secondary">Check local data</button>
                   <button type="submit" class="btn btn-primary">Fetch from CoinGecko</button>
-                  <span id="fetchStatus" class="badge text-bg-secondary ms-2">Not run</span>
+                  <span id="fetchStatus" class="badge text-bg-secondary">Not run</span>
                 </div>
               </form>
 
+              <div id="existingDataSummary" class="alert alert-secondary mt-3 mb-0" role="status">
+                Check local data to see whether candles already exist before fetching.
+              </div>
               <pre id="fetchResponse" class="bg-body-tertiary border rounded p-3 mt-3 mb-0 small" style="min-height: 12rem; white-space: pre-wrap;">Submit the form to POST /api/v1/admin/assets/<%= asset.id %>/fetch.</pre>
+            </div>
+          </div>
+
+          <div class="card shadow-sm mb-4">
+            <div class="card-header bg-white d-flex justify-content-between align-items-center">
+              <h2 class="h5 mb-0">Gap report</h2>
+              <span id="gapStatus" class="badge text-bg-secondary">Not run</span>
+            </div>
+            <div class="card-body">
+              <p class="text-body-secondary">Run a local coverage report for the selected fetch range without starting a backfill.</p>
+              <button type="button" id="runGapReportButton" class="btn btn-outline-primary">Run gap report</button>
+              <div id="gapSummary" class="row g-3 mt-1"></div>
+              <pre id="gapResponse" class="bg-body-tertiary border rounded p-3 mt-3 mb-0 small" style="min-height: 10rem; white-space: pre-wrap;">Run a gap report to view expected, found, missing, and compact gap ranges.</pre>
             </div>
           </div>
 
@@ -190,22 +207,144 @@
       const form = document.getElementById('fetchForm');
       const statusBadge = document.getElementById('fetchStatus');
       const responseBody = document.getElementById('fetchResponse');
+      const checkExistingButton = document.getElementById('checkExistingButton');
+      const existingDataSummary = document.getElementById('existingDataSummary');
+      const runGapReportButton = document.getElementById('runGapReportButton');
+      const gapStatus = document.getElementById('gapStatus');
+      const gapSummary = document.getElementById('gapSummary');
+      const gapResponse = document.getElementById('gapResponse');
+      const assetGapsUrl = '/api/v1/admin/assets/<%= encodeURIComponent(asset.id) %>/gaps';
 
-      form.addEventListener('submit', async (event) => {
-        event.preventDefault();
-        statusBadge.className = 'badge text-bg-secondary ms-2';
-        statusBadge.textContent = 'Fetching';
-        responseBody.textContent = 'Fetching from CoinGecko...';
-
-        const payload = {
+      function getRangePayload() {
+        return {
           from: document.getElementById('from').value,
           to: document.getElementById('to').value,
           interval: document.getElementById('interval').value,
-          vsCurrency: document.getElementById('vsCurrency').value,
+          vsCurrency: document.getElementById('vsCurrency').value
+        };
+      }
+
+      function getFetchPayload() {
+        return {
+          ...getRangePayload(),
           conflictPolicy: document.getElementById('conflictPolicy').value
         };
+      }
+
+      function buildGapUrl(payload) {
+        const params = new URLSearchParams(payload);
+        return `${assetGapsUrl}?${params.toString()}`;
+      }
+
+      function setBadge(element, ok, text) {
+        element.className = `badge ${ok ? 'text-bg-success' : 'text-bg-danger'}`;
+        element.textContent = text;
+      }
+
+      function renderGapMetric(label, value, tone) {
+        return `
+          <div class="col-sm-4">
+            <div class="border rounded p-3 h-100">
+              <div class="text-body-secondary small">${label}</div>
+              <div class="fs-4 fw-semibold text-${tone || 'body'}">${value}</div>
+            </div>
+          </div>
+        `;
+      }
+
+      function summarizeExistingData(report) {
+        if (report.expectedCount === 0) {
+          existingDataSummary.className = 'alert alert-warning mt-3 mb-0';
+          existingDataSummary.textContent = 'No expected candle buckets were found for this range.';
+          return;
+        }
+
+        if (report.missingCount === 0) {
+          existingDataSummary.className = 'alert alert-success mt-3 mb-0';
+          existingDataSummary.textContent = `All ${report.expectedCount} expected ${report.interval} candles already exist locally for ${report.vsCurrency.toUpperCase()}.`;
+          return;
+        }
+
+        if (report.foundCount > 0) {
+          existingDataSummary.className = 'alert alert-warning mt-3 mb-0';
+          existingDataSummary.textContent = `${report.foundCount} of ${report.expectedCount} expected ${report.interval} candles already exist locally; ${report.missingCount} are missing.`;
+          return;
+        }
+
+        existingDataSummary.className = 'alert alert-info mt-3 mb-0';
+        existingDataSummary.textContent = `No local candles exist for the ${report.expectedCount} expected ${report.interval} buckets in this range.`;
+      }
+
+      function renderGapReport(report) {
+        gapSummary.innerHTML = [
+          renderGapMetric('Expected', report.expectedCount, 'body'),
+          renderGapMetric('Found', report.foundCount, report.foundCount > 0 ? 'success' : 'body'),
+          renderGapMetric('Missing', report.missingCount, report.missingCount > 0 ? 'danger' : 'success')
+        ].join('');
+        gapResponse.textContent = JSON.stringify(report, null, 2);
+        summarizeExistingData(report);
+      }
+
+      async function runGapReport({ updateGapPanel = true } = {}) {
+        const response = await fetch(buildGapUrl(getRangePayload()), {
+          headers: { Accept: 'application/json' }
+        });
+        const data = await response.json();
+
+        if (!response.ok) {
+          const message = data.error && data.error.message ? data.error.message : `${response.status} ${response.statusText}`;
+          throw new Error(message);
+        }
+
+        if (updateGapPanel) {
+          setBadge(gapStatus, true, `${response.status} ${response.statusText}`);
+          renderGapReport(data.gapReport || data);
+        } else {
+          summarizeExistingData(data.gapReport || data);
+        }
+
+        return data.gapReport || data;
+      }
+
+      checkExistingButton.addEventListener('click', async () => {
+        existingDataSummary.className = 'alert alert-secondary mt-3 mb-0';
+        existingDataSummary.textContent = 'Checking local data...';
 
         try {
+          await runGapReport({ updateGapPanel: false });
+        } catch (error) {
+          existingDataSummary.className = 'alert alert-danger mt-3 mb-0';
+          existingDataSummary.textContent = error.message;
+        }
+      });
+
+      runGapReportButton.addEventListener('click', async () => {
+        gapStatus.className = 'badge text-bg-secondary';
+        gapStatus.textContent = 'Running';
+        gapResponse.textContent = 'Checking local candle coverage...';
+
+        try {
+          await runGapReport();
+        } catch (error) {
+          gapStatus.className = 'badge text-bg-danger';
+          gapStatus.textContent = 'Request failed';
+          gapResponse.textContent = error.message;
+        }
+      });
+
+      form.addEventListener('submit', async (event) => {
+        event.preventDefault();
+        statusBadge.className = 'badge text-bg-secondary';
+        statusBadge.textContent = 'Checking local data';
+        responseBody.textContent = 'Checking whether data already exists before fetching...';
+
+        const payload = getFetchPayload();
+
+        try {
+          const report = await runGapReport({ updateGapPanel: false });
+          responseBody.textContent = `Local data check complete: ${report.foundCount} of ${report.expectedCount} expected candles already exist; ${report.missingCount} are missing.\n\nFetching from CoinGecko...`;
+          statusBadge.textContent = 'Fetching';
+
           const response = await fetch('/api/v1/admin/assets/<%= encodeURIComponent(asset.id) %>/fetch', {
             method: 'POST',
             headers: {
@@ -216,11 +355,10 @@
           });
           const data = await response.json();
 
-          statusBadge.className = `badge ${response.ok ? 'text-bg-success' : 'text-bg-danger'} ms-2`;
-          statusBadge.textContent = `${response.status} ${response.statusText}`;
+          setBadge(statusBadge, response.ok, `${response.status} ${response.statusText}`);
           responseBody.textContent = JSON.stringify(data, null, 2);
         } catch (error) {
-          statusBadge.className = 'badge text-bg-danger ms-2';
+          statusBadge.className = 'badge text-bg-danger';
           statusBadge.textContent = 'Request failed';
           responseBody.textContent = error.message;
         }
