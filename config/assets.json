@@ -1,0 +1,18 @@
+{
+  "assets": [
+    {
+      "id": "bitcoin",
+      "symbol": "BTC",
+      "name": "Bitcoin",
+      "enabled": true,
+      "currency": "usd"
+    },
+    {
+      "id": "ethereum",
+      "symbol": "ETH",
+      "name": "Ethereum",
+      "enabled": true,
+      "currency": "usd"
+    }
+  ]
+}
