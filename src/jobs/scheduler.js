@@ -124,6 +124,12 @@ class JobScheduler {
     return this.queue.some(predicate) || Array.from(this.activeJobs.values()).some(predicate);
   }
 
+  removeQueuedJobs(predicate) {
+    const before = this.queue.length;
+    this.queue = this.queue.filter((job) => !predicate(job));
+    return before - this.queue.length;
+  }
+
   process() {
     if (this.running) {
       return;
