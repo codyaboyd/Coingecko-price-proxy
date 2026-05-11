@@ -12,6 +12,7 @@
       <div class="container">
         <a class="navbar-brand" href="/admin"><%= status.appName %></a>
         <div class="navbar-nav ms-auto">
+          <a class="nav-link" href="/admin/reload-status">Reload Status</a>
           <a class="nav-link" href="/admin/api-test">API Test</a>
         </div>
       </div>
@@ -144,6 +145,56 @@
               </tbody>
             </table>
           </div>
+        </div>
+      </div>
+
+
+      <div class="card shadow-sm mb-4">
+        <div class="card-header bg-white d-flex align-items-center justify-content-between flex-wrap gap-2">
+          <div>
+            <h2 class="h5 mb-1">Hot reload status</h2>
+            <p class="text-secondary small mb-0">Runtime config reloads and pending import candidates.</p>
+          </div>
+          <% if (reloadStatus.lastReload.status === 'success') { %>
+            <span class="badge text-bg-success">Success</span>
+          <% } else if (reloadStatus.lastReload.status === 'error') { %>
+            <span class="badge text-bg-danger">Error</span>
+          <% } else { %>
+            <span class="badge text-bg-secondary"><%= reloadStatus.lastReload.status %></span>
+          <% } %>
+        </div>
+        <div class="card-body">
+          <div class="row g-3 mb-3">
+            <div class="col-md-4">
+              <p class="text-uppercase text-secondary small fw-semibold mb-1">Last reload time</p>
+              <p class="mb-0"><%= reloadStatus.lastReloadAtIso || 'Never' %></p>
+            </div>
+            <div class="col-md-4">
+              <p class="text-uppercase text-secondary small fw-semibold mb-1">Last reload target</p>
+              <p class="mb-0"><code><%= reloadStatus.lastReload.target %></code></p>
+            </div>
+            <div class="col-md-4">
+              <p class="text-uppercase text-secondary small fw-semibold mb-1">Pending imports</p>
+              <p class="h4 mb-0"><%= reloadStatus.importCandidates.length %></p>
+            </div>
+          </div>
+          <p class="mb-2"><%= reloadStatus.lastReload.message %></p>
+          <% if (reloadStatus.lastReload.errors.length > 0) { %>
+            <div class="alert alert-warning" role="alert">
+              <div class="fw-semibold mb-2">Last reload errors</div>
+              <ul class="mb-0">
+                <% reloadStatus.lastReload.errors.forEach((error) => { %>
+                  <li><%= error %></li>
+                <% }) %>
+              </ul>
+            </div>
+          <% } %>
+          <% if (reloadStatus.lastReload.restartRequiredSettings.length > 0) { %>
+            <div class="alert alert-info" role="alert">
+              Restart required for: <code><%= reloadStatus.lastReload.restartRequiredSettings.join(', ') %></code>
+            </div>
+          <% } %>
+          <a href="/admin/reload-status" class="btn btn-outline-primary btn-sm">View reload dashboard</a>
         </div>
       </div>
 

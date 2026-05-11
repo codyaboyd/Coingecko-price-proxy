@@ -207,6 +207,56 @@ class RecentRefreshScheduler {
     this.runCount = 0;
   }
 
+  buildAssetState(asset, now) {
+    const policy = normalizeFetchPolicy(asset);
+    const intervals = {};
+
+    policy.intervals.forEach((interval) => {
+      intervals[interval] = {
+        nextRunAt: now,
+        lastRunAt: null,
+        lastJobCount: 0
+      };
+    });
+
+    return {
+      asset,
+      policy,
+      intervals,
+      lastRunAt: null,
+      lastRunJobCount: 0,
+      lastError: null
+    };
+  }
+
+  reloadAssets(assets) {
+    const now = Date.now();
+    const enabledAssets = (assets || [])
+      .filter((asset) => asset.enabled)
+      .sort((left, right) => left.priority - right.priority || left.symbol.localeCompare(right.symbol));
+    const enabledAssetIds = new Set(enabledAssets.map((asset) => asset.id));
+
+    this.assets = enabledAssets;
+    this.assetStates = new Map(enabledAssets.map((asset) => [asset.id, this.buildAssetState(asset, now)]));
+
+    if (this.jobScheduler && typeof this.jobScheduler.removeQueuedJobs === 'function') {
+      const removedJobs = this.jobScheduler.removeQueuedJobs((job) => (
+        job.type === 'recent_refresh' && !enabledAssetIds.has(job.payload.assetId)
+      ));
+
+      if (removedJobs > 0) {
+        logger.info(`Removed ${removedJobs} queued recent refresh job(s) for disabled or removed asset(s).`);
+      }
+    }
+
+    if (this.startedAt !== null) {
+      this.scheduleNext(0);
+    }
+
+    logger.info(`Recent refresh scheduler reloaded for ${this.assetStates.size} enabled asset(s).`);
+    return this.getStatus();
+  }
+
   start() {
     if (this.startedAt !== null) {
       return this.getStatus();
@@ -214,27 +264,7 @@ class RecentRefreshScheduler {
 
     const now = Date.now();
     this.startedAt = now;
-    this.assets.forEach((asset) => {
-      const policy = normalizeFetchPolicy(asset);
-      const intervals = {};
-
-      policy.intervals.forEach((interval) => {
-        intervals[interval] = {
-          nextRunAt: now,
-          lastRunAt: null,
-          lastJobCount: 0
-        };
-      });
-
-      this.assetStates.set(asset.id, {
-        asset,
-        policy,
-        intervals,
-        lastRunAt: null,
-        lastRunJobCount: 0,
-        lastError: null
-      });
-    });
+    this.assetStates = new Map(this.assets.map((asset) => [asset.id, this.buildAssetState(asset, now)]));
     this.scheduleNext(0);
 
     logger.info(`Recent refresh scheduler started for ${this.assetStates.size} enabled asset(s).`);

@@ -2,25 +2,39 @@ const { createApp } = require('./src/app');
 const { initializeDatabase } = require('./src/db');
 const { countAssets } = require('./src/db/queries');
 const { loadAssets } = require('./src/services/asset-service');
+const { createHotReloadManager } = require('./src/services/hot-reload');
 const { loadServerConfig } = require('./src/utils/config');
 const { createScheduler } = require('./src/jobs/scheduler');
 const { createRecentRefreshScheduler } = require('./src/jobs/recent-refresh-scheduler');
 const logger = require('./src/utils/logger');
 
 const config = loadServerConfig();
-const db = initializeDatabase(config);
+const assets = loadAssets(config.assetsConfigPath);
+const db = initializeDatabase(config, { syncAssets: false });
 const app = createApp(config);
 const jobScheduler = createScheduler({ db });
 const recentRefreshScheduler = createRecentRefreshScheduler({
   db,
   jobScheduler,
-  assets: loadAssets(config.assetsConfigPath)
+  assets
+});
+const hotReloadManager = createHotReloadManager({
+  app,
+  db,
+  config,
+  jobScheduler,
+  recentRefreshScheduler,
+  assets
 });
 
 app.set('db', db);
+app.set('assets', assets);
 app.set('jobScheduler', jobScheduler);
 app.set('recentRefreshScheduler', recentRefreshScheduler);
+app.set('hotReloadManager', hotReloadManager);
 recentRefreshScheduler.start();
+hotReloadManager.reloadAssetsConfig();
+hotReloadManager.start();
 
 const server = app.listen(config.port, config.host, () => {
   logger.info(`${config.appName} listening at http://${config.host}:${config.port}`);
@@ -30,9 +44,11 @@ const server = app.listen(config.port, config.host, () => {
 function shutdown(signal) {
   logger.info(`${signal} received, shutting down ${config.appName}`);
   recentRefreshScheduler.stopTimer();
-  server.close(() => {
-    db.close();
-    process.exit(0);
+  Promise.resolve(hotReloadManager.stop()).finally(() => {
+    server.close(() => {
+      db.close();
+      process.exit(0);
+    });
   });
 }
 

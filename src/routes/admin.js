@@ -9,6 +9,49 @@ const { createRecentRefreshScheduler } = require('../jobs/recent-refresh-schedul
 const router = express.Router();
 
 
+function getHotReloadManager(req) {
+  return req.app.get('hotReloadManager') || null;
+}
+
+function getConfiguredAssets(req) {
+  const hotReloadManager = getHotReloadManager(req);
+
+  if (hotReloadManager && typeof hotReloadManager.getAssets === 'function') {
+    return hotReloadManager.getAssets();
+  }
+
+  const appAssets = req.app.get('assets');
+
+  if (Array.isArray(appAssets)) {
+    return appAssets;
+  }
+
+  const config = req.app.get('config');
+  return loadAssets(config.assetsConfigPath);
+}
+
+function getReloadStatus(req) {
+  const hotReloadManager = getHotReloadManager(req);
+
+  if (!hotReloadManager || typeof hotReloadManager.getStatus !== 'function') {
+    return {
+      lastReload: {
+        target: 'hot-reload',
+        status: 'disabled',
+        message: 'Hot reload manager is not running.',
+        errors: [],
+        changedSettings: [],
+        restartRequiredSettings: [],
+        at: null
+      },
+      events: [],
+      importCandidates: []
+    };
+  }
+
+  return hotReloadManager.getStatus();
+}
+
 function getDatabase(req) {
   const db = req.app.get('db');
 
@@ -37,11 +80,10 @@ function getRecentRefreshScheduler(req) {
   let scheduler = req.app.get('recentRefreshScheduler');
 
   if (!scheduler) {
-    const config = req.app.get('config');
     scheduler = createRecentRefreshScheduler({
       db: getDatabase(req),
       jobScheduler: getScheduler(req),
-      assets: loadAssets(config.assetsConfigPath)
+      assets: getConfiguredAssets(req)
     });
     scheduler.start();
     req.app.set('recentRefreshScheduler', scheduler);
@@ -75,7 +117,7 @@ function formatTimestamp(value) {
 router.get('/api-test', (req, res, next) => {
   try {
     const config = req.app.get('config');
-    const assets = loadAssets(config.assetsConfigPath);
+    const assets = getConfiguredAssets(req);
 
     res.render('admin-api-test', {
       title: `${config.adminTitle} API Test`,
@@ -87,6 +129,33 @@ router.get('/api-test', (req, res, next) => {
   }
 });
 
+
+router.get('/reload-status', (req, res, next) => {
+  try {
+    const config = req.app.get('config');
+    const reloadStatus = getReloadStatus(req);
+
+    res.render('admin-reload-status', {
+      title: `${config.adminTitle} - Reload Status`,
+      appName: config.appName,
+      reloadStatus: {
+        ...reloadStatus,
+        lastReloadAtIso: formatTimestamp(reloadStatus.lastReload.at),
+        events: reloadStatus.events.map((event) => ({
+          ...event,
+          atIso: formatTimestamp(event.at)
+        })),
+        importCandidates: reloadStatus.importCandidates.map((candidate) => ({
+          ...candidate,
+          firstSeenAtIso: formatTimestamp(candidate.firstSeenAt),
+          updatedAtIso: formatTimestamp(candidate.updatedAt)
+        }))
+      }
+    });
+  } catch (error) {
+    next(error);
+  }
+});
 
 router.get('/assets/:id', (req, res, next) => {
   try {
@@ -153,7 +222,8 @@ router.post('/scheduler/run-now', (req, res, next) => {
 router.get('/', (req, res, next) => {
   try {
     const config = req.app.get('config');
-    const assets = loadAssets(config.assetsConfigPath);
+    const assets = getConfiguredAssets(req);
+    const reloadStatus = getReloadStatus(req);
 
     const queue = getScheduler(req).getStatus();
     const recentRefresh = getRecentRefreshScheduler(req).getStatus();
@@ -173,6 +243,15 @@ router.get('/', (req, res, next) => {
       },
       schedulerAction: req.query.schedulerAction || null,
       schedulerDetails: req.query.schedulerDetails || null,
+      reloadStatus: {
+        ...reloadStatus,
+        lastReloadAtIso: formatTimestamp(reloadStatus.lastReload.at),
+        importCandidates: reloadStatus.importCandidates.map((candidate) => ({
+          ...candidate,
+          firstSeenAtIso: formatTimestamp(candidate.firstSeenAt),
+          updatedAtIso: formatTimestamp(candidate.updatedAt)
+        }))
+      },
       status: {
         appName: config.appName,
         runtime: `Node.js ${process.version} (${config.nodeEnv})`,
