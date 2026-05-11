@@ -1,1 +1,8 @@
-console.log('Backup command placeholder. No backup behavior is implemented in the MVP scaffold.');
+#!/usr/bin/env node
+
+const { main } = require('./cli');
+
+main(['backup-db']).catch((error) => {
+  console.error(error.message);
+  process.exit(1);
+});

@@ -1,17 +1,8 @@
-const { validateAssetsFile } = require('../src/services/asset-service');
-const { loadServerConfig } = require('../src/utils/config');
-const logger = require('../src/utils/logger');
+#!/usr/bin/env node
 
-function main() {
-  const config = loadServerConfig();
-  const assets = validateAssetsFile(config.assetsConfigPath);
+const { main } = require('./cli');
 
-  logger.info(`Validated ${assets.length} configured assets from ${config.assetsConfigPath}.`);
-}
-
-try {
-  main();
-} catch (error) {
+main(['validate-assets']).catch((error) => {
   console.error(error.message);
   process.exit(1);
-}
+});
