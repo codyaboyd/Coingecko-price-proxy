@@ -13,7 +13,8 @@
     "convert": "node scripts/convert.js",
     "backup": "node scripts/backup.js",
     "seed:fake-btc": "node scripts/seed-fake-btc-candles.js",
-    "verify:history": "node scripts/verify-history-service.js"
+    "verify:history": "node scripts/verify-history-service.js",
+    "cg:test": "node scripts/cli.js cg-test"
   },
   "keywords": [
     "cache",
