@@ -49,7 +49,15 @@ logs/
    npm run migrate
    ```
 
-4. Validate the asset configuration:
+4. Set admin credentials in `.env` before opening the admin UI:
+
+   ```dotenv
+   ADMIN_USERNAME=admin
+   ADMIN_PASSWORD=use-a-strong-password
+   ADMIN_SESSION_SECRET=use-a-long-random-secret
+   ```
+
+5. Validate the asset configuration:
 
    ```bash
    npm run validate-assets
@@ -99,6 +107,28 @@ Open the app:
 - Health: <http://127.0.0.1:3000/health>
 
 The admin dashboard shows app status, runtime, loaded asset count, asset config path, and database path.
+
+## Admin authentication
+
+Admin access is protected with a simple signed-cookie session login. Configure these environment variables in `.env` or the process environment:
+
+- `ADMIN_USERNAME` - admin login username.
+- `ADMIN_PASSWORD` - admin login password.
+- `ADMIN_SESSION_SECRET` - long random secret used to sign the admin session cookie.
+
+Protected routes:
+
+- `/admin` and all nested admin pages.
+- `/api/v1/admin/*` maintenance endpoints.
+
+Public routes remain available without admin authentication:
+
+- `/api/v1/health`
+- `/api/v1/assets`
+- `/api/v1/history/:assetId`
+- `/health`
+
+Use `/admin/login` to sign in and `/admin/logout` to clear the session. The app also sends security headers with Helmet and logs each request with method, path, status code, duration, and remote address.
 
 ## Scripts
 
@@ -198,7 +228,7 @@ npm run queue-status
 
 ## Configuration
 
-- `.env.example` documents supported environment variables, including `APP_NAME`, `LOG_LEVEL`, and path overrides.
+- `.env.example` documents supported environment variables, including `APP_NAME`, `LOG_LEVEL`, admin authentication credentials, and path overrides.
 - `config/server.json` contains default server settings.
 - `config/assets.json` contains BTC and ETH examples. Each asset must define `id`, `symbol`, `name`, `coingeckoId`, `vsCurrency`, `enabled`, and `priority`.
 - `src/utils/env.js` loads `.env` with `dotenv` and validates required runtime configuration.
