@@ -2,6 +2,7 @@ const express = require('express');
 
 const { getPublicAsset, listPublicAssets } = require('../db/queries');
 const { getHistory, SUPPORTED_INTERVALS } = require('../services/history-service');
+const { getGapReport } = require('../services/cache-policy');
 const { runManualFetch } = require('../services/manual-fetch-service');
 
 const router = express.Router();
@@ -108,6 +109,65 @@ function parseTimestamp(value, field) {
     `invalid_${field}`,
     `${field} must be a YYYY-MM-DD date, millisecond timestamp, or ISO date string.`
   );
+}
+
+
+function parseGapTimestamp(value, field) {
+  if (value === undefined || value === null || String(value).trim() === '') {
+    return null;
+  }
+
+  const text = String(value).trim();
+
+  if (/^-?\d+$/.test(text)) {
+    const timestamp = Number(text);
+
+    if (Number.isSafeInteger(timestamp)) {
+      return timestamp;
+    }
+
+    throw createApiError(400, `invalid_${field}`, `${field} must be a safe millisecond timestamp.`);
+  }
+
+  const dateOnlyMatch = text.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+
+  if (dateOnlyMatch) {
+    const year = Number(dateOnlyMatch[1]);
+    const monthIndex = Number(dateOnlyMatch[2]) - 1;
+    const day = Number(dateOnlyMatch[3]);
+    const timestamp = Date.UTC(year, monthIndex, day, 0, 0, 0, 0);
+    const parsedDate = new Date(timestamp);
+
+    if (
+      parsedDate.getUTCFullYear() === year &&
+      parsedDate.getUTCMonth() === monthIndex &&
+      parsedDate.getUTCDate() === day
+    ) {
+      return timestamp;
+    }
+  }
+
+  const parsed = Date.parse(text);
+
+  if (Number.isFinite(parsed)) {
+    return parsed;
+  }
+
+  throw createApiError(
+    400,
+    `invalid_${field}`,
+    `${field} must be a YYYY-MM-DD date, millisecond timestamp, or ISO date string.`
+  );
+}
+
+function parseRequiredGapTimestamp(value, field) {
+  const timestamp = parseGapTimestamp(value, field);
+
+  if (timestamp === null) {
+    throw createApiError(400, `missing_${field}`, `${field} is required.`);
+  }
+
+  return timestamp;
 }
 
 function parseLimit(value) {
@@ -328,6 +388,37 @@ router.get('/assets/:assetId', (req, res, next) => {
   }
 });
 
+router.get('/admin/assets/:assetId/gaps', (req, res, next) => {
+  try {
+    const db = getDatabase(req);
+    const asset = getPublicAsset(db, req.params.assetId);
+
+    if (!asset) {
+      next(createNotFoundError(req.params.assetId));
+      return;
+    }
+
+    const interval = normalizeChoice(req.query.interval, DEFAULT_INTERVAL, Array.from(SUPPORTED_INTERVALS), 'interval');
+    const vsCurrency = String(req.query.vsCurrency || req.query.vs || asset.vsCurrency).trim().toLowerCase();
+    const fromTs = parseRequiredGapTimestamp(req.query.from, 'from');
+    const toTs = parseRequiredGapTimestamp(req.query.to, 'to');
+
+    if (!vsCurrency) {
+      throw createApiError(400, 'invalid_vsCurrency', 'vsCurrency must be a non-empty currency code.');
+    }
+
+    validateRange(fromTs, toTs);
+
+    const gapReport = getGapReport(asset.id, vsCurrency, interval, fromTs, toTs, { db });
+
+    res.json({
+      ...gapReport,
+      gapReport
+    });
+  } catch (error) {
+    next(error);
+  }
+});
 
 router.post('/admin/assets/:assetId/fetch', async (req, res, next) => {
   try {

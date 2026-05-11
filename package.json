@@ -15,7 +15,8 @@
     "seed:fake-btc": "node scripts/seed-fake-btc-candles.js",
     "verify:history": "node scripts/verify-history-service.js",
     "cg:test": "node scripts/cli.js cg-test",
-    "verify:history-normalizer": "node scripts/verify-history-normalizer.js"
+    "verify:history-normalizer": "node scripts/verify-history-normalizer.js",
+    "verify:cache-policy": "node scripts/verify-cache-policy.js"
   },
   "keywords": [
     "cache",
