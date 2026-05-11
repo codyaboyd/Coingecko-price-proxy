@@ -11,7 +11,9 @@
     <nav class="navbar navbar-expand-lg bg-dark navbar-dark">
       <div class="container">
         <a class="navbar-brand" href="/admin"><%= status.appName %></a>
-        <span class="navbar-text">MVP scaffold</span>
+        <div class="navbar-nav ms-auto">
+          <a class="nav-link" href="/admin/api-test">API Test</a>
+        </div>
       </div>
     </nav>
 
@@ -88,6 +90,8 @@
                   <div class="list-group list-group-flush">
                     <a class="list-group-item list-group-item-action px-0" href="/api/v1/health">GET /api/v1/health</a>
                     <a class="list-group-item list-group-item-action px-0" href="/api/v1/assets">GET /api/v1/assets</a>
+                    <a class="list-group-item list-group-item-action px-0" href="/api/v1/history/btc">GET /api/v1/history/:assetId</a>
+                    <a class="list-group-item list-group-item-action px-0" href="/admin/api-test">Admin API test page</a>
                   </div>
                 </dd>
                 <dt>Fetching</dt>

@@ -30,12 +30,18 @@ function errorHandler(err, req, res, next) {
   logger.error(err.message, { stack: err.stack });
 
   if (isApiRequest(req)) {
-    res.status(safeStatus).json({
+    const payload = {
       error: {
         code,
         message
       }
-    });
+    };
+
+    if (err.details) {
+      payload.error.details = err.details;
+    }
+
+    res.status(safeStatus).json(payload);
     return;
   }
 
