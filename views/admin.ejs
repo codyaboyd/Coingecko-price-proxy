@@ -12,6 +12,8 @@
       <div class="container">
         <a class="navbar-brand" href="/admin"><%= status.appName %></a>
         <div class="navbar-nav ms-auto">
+          <a class="nav-link" href="/admin/assets">Assets</a>
+          <a class="nav-link" href="/admin/imports">Imports</a>
           <a class="nav-link" href="/admin/reload-status">Reload Status</a>
           <a class="nav-link" href="/admin/api-test">API Test</a>
         </div>
@@ -246,8 +248,12 @@
       <div class="row g-4">
         <section class="col-lg-8">
           <div class="card shadow-sm">
-            <div class="card-header bg-white">
-              <h2 class="h5 mb-0">Configured assets</h2>
+            <div class="card-header bg-white d-flex justify-content-between align-items-center flex-wrap gap-2">
+              <div>
+                <h2 class="h5 mb-0">Configured assets</h2>
+                <p class="text-secondary small mb-0">Open the full asset admin table for safe config editing.</p>
+              </div>
+              <a class="btn btn-sm btn-outline-primary" href="/admin/assets">Open assets page</a>
             </div>
             <div class="table-responsive">
               <table class="table table-striped table-hover mb-0 align-middle">
@@ -278,7 +284,7 @@
                           <span class="badge text-bg-secondary">Disabled</span>
                         <% } %>
                       </td>
-                      <td><a href="/admin/assets/<%= asset.id %>" class="btn btn-sm btn-primary">Manage</a></td>
+                      <td><div class="btn-group btn-group-sm"><a href="/admin/assets/<%= asset.id %>" class="btn btn-outline-primary">Manage</a><a href="/admin/assets/<%= asset.id %>/edit" class="btn btn-primary">Edit</a></div></td>
                       <td><a href="/api/v1/assets/<%= asset.id %>" class="btn btn-sm btn-outline-primary">JSON</a></td>
                     </tr>
                   <% }) %>
