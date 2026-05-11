@@ -4,6 +4,7 @@ const { getAssetCandleBounds, getPublicAsset, listFetchRunsForAsset } = require(
 const { loadAssets } = require('../services/asset-service');
 const { resolveFromRoot } = require('../utils/files');
 const { createScheduler } = require('../jobs/scheduler');
+const { createRecentRefreshScheduler } = require('../jobs/recent-refresh-scheduler');
 
 const router = express.Router();
 
@@ -29,6 +30,34 @@ function getScheduler(req) {
   }
 
   return scheduler;
+}
+
+
+function getRecentRefreshScheduler(req) {
+  let scheduler = req.app.get('recentRefreshScheduler');
+
+  if (!scheduler) {
+    const config = req.app.get('config');
+    scheduler = createRecentRefreshScheduler({
+      db: getDatabase(req),
+      jobScheduler: getScheduler(req),
+      assets: loadAssets(config.assetsConfigPath)
+    });
+    scheduler.start();
+    req.app.set('recentRefreshScheduler', scheduler);
+  }
+
+  return scheduler;
+}
+
+function redirectWithSchedulerAction(res, action, details) {
+  const params = new URLSearchParams({ schedulerAction: action });
+
+  if (details) {
+    params.set('schedulerDetails', details);
+  }
+
+  res.redirect(`/admin?${params.toString()}`);
 }
 
 function formatJobLabel(job) {
@@ -93,12 +122,41 @@ router.get('/assets/:id', (req, res, next) => {
   }
 });
 
+
+router.post('/scheduler/pause', (req, res, next) => {
+  try {
+    getRecentRefreshScheduler(req).pause();
+    redirectWithSchedulerAction(res, 'paused');
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.post('/scheduler/resume', (req, res, next) => {
+  try {
+    getRecentRefreshScheduler(req).resume();
+    redirectWithSchedulerAction(res, 'resumed');
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.post('/scheduler/run-now', (req, res, next) => {
+  try {
+    const result = getRecentRefreshScheduler(req).runNow();
+    redirectWithSchedulerAction(res, 'run-now', `${result.jobCount} job(s) queued`);
+  } catch (error) {
+    next(error);
+  }
+});
+
 router.get('/', (req, res, next) => {
   try {
     const config = req.app.get('config');
     const assets = loadAssets(config.assetsConfigPath);
 
     const queue = getScheduler(req).getStatus();
+    const recentRefresh = getRecentRefreshScheduler(req).getStatus();
 
     res.render('admin', {
       title: config.adminTitle,
@@ -107,6 +165,14 @@ router.get('/', (req, res, next) => {
         ...queue,
         activeJobLabel: formatJobLabel(queue.activeJob)
       },
+      recentRefresh: {
+        ...recentRefresh,
+        startedAtIso: formatTimestamp(recentRefresh.startedAt),
+        lastRunAtIso: formatTimestamp(recentRefresh.lastRunAt),
+        nextRunAtIso: formatTimestamp(recentRefresh.nextRunAt)
+      },
+      schedulerAction: req.query.schedulerAction || null,
+      schedulerDetails: req.query.schedulerDetails || null,
       status: {
         appName: config.appName,
         runtime: `Node.js ${process.version} (${config.nodeEnv})`,

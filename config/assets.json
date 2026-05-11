@@ -7,7 +7,12 @@
       "coingeckoId": "bitcoin",
       "vsCurrency": "usd",
       "enabled": true,
-      "priority": 10
+      "priority": 10,
+      "fetchPolicy": {
+        "recentEveryMinutes": 60,
+        "dailyBackfill": true,
+        "maxBackfillDaysPerRun": 10
+      }
     },
     {
       "id": "eth",
@@ -16,7 +21,12 @@
       "coingeckoId": "ethereum",
       "vsCurrency": "usd",
       "enabled": true,
-      "priority": 20
+      "priority": 20,
+      "fetchPolicy": {
+        "recentEveryMinutes": 60,
+        "dailyBackfill": true,
+        "maxBackfillDaysPerRun": 10
+      }
     }
   ]
 }
