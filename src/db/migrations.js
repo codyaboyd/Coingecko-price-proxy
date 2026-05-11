@@ -73,6 +73,13 @@ const MIGRATIONS = [
       CREATE INDEX IF NOT EXISTS idx_import_runs_asset_created
         ON import_runs(asset_id, created_at);
     `
+  },
+  {
+    version: 2,
+    name: 'add_candle_market_cap',
+    up: `
+      ALTER TABLE candles ADD COLUMN market_cap REAL;
+    `
   }
 ];
 
