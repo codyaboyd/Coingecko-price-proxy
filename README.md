@@ -107,11 +107,94 @@ The admin dashboard shows app status, runtime, loaded asset count, asset config 
 - `./restart.sh` - stop and then start the managed `chrono-cache` screen session.
 - `npm start` - run the Express server directly.
 - `npm run dev` - run the server with `nodemon`.
-- `npm run migrate` - create the initial SQLite schema.
-- `npm run validate-assets` - validate `config/assets.json`.
+- `npm run migrate` - run `node scripts/cli.js migrate` to apply pending SQLite migrations.
+- `npm run validate-assets` - run `node scripts/cli.js validate-assets` to validate `config/assets.json`.
+- `npm run backup-db` - run `node scripts/cli.js backup-db` to create a SQLite backup under `data/backups`.
+- `npm run export-history -- --asset btc --format csv` - export stored candle history.
+- `npm run repair-gaps -- --asset btc --from 2025-01-01 --to 2025-01-31 --interval 1d` - enqueue and run gap repair fetch jobs in the CLI process.
+- `npm run queue-status` - print the CLI limitation for inspecting the in-memory server queue.
 - `npm run import` - placeholder for future import tooling.
 - `npm run convert` - placeholder for future conversion tooling.
-- `npm run backup` - placeholder for future backup tooling.
+- `npm run backup` - alias for `npm run backup-db`.
+
+## Maintenance CLI
+
+Maintenance utilities are centralized in `scripts/cli.js` and use plain JavaScript. Commands can be run directly with `node scripts/cli.js <command>` or through the matching npm scripts. Options may be passed as `--name value` or `--name=value`.
+
+### `migrate`
+
+Apply any pending SQLite schema migrations to the configured database.
+
+```bash
+node scripts/cli.js migrate
+npm run migrate
+```
+
+### `validate-assets`
+
+Validate the configured asset file, usually `config/assets.json`, and print the number of valid assets.
+
+```bash
+node scripts/cli.js validate-assets
+npm run validate-assets
+```
+
+### `backup-db`
+
+Create a SQLite database backup at `data/backups/history-YYYYMMDD-HHMMSS.sqlite`. The backup command uses SQLite's backup API so it can safely copy the configured database even when WAL mode is enabled.
+
+```bash
+node scripts/cli.js backup-db
+npm run backup-db
+```
+
+### `export-history`
+
+Export stored asset candles to CSV or JSON. If `--output` is omitted, the export is written to standard output; if `--output` is provided, parent directories are created automatically.
+
+Options:
+
+- `--asset` / `--assetId` - required asset ID.
+- `--from` - optional start timestamp as `YYYY-MM-DD`, ISO date string, or millisecond timestamp.
+- `--to` - optional end timestamp as `YYYY-MM-DD`, ISO date string, or millisecond timestamp.
+- `--interval` - optional candle interval: `5m`, `1h`, or `1d`; defaults to `1d`.
+- `--vs` / `--vsCurrency` - optional quote currency; defaults to the asset's configured `vsCurrency`.
+- `--format` - optional output format: `csv` or `json`; defaults to `csv`.
+- `--output` - optional destination file path.
+
+Examples:
+
+```bash
+node scripts/cli.js export-history --asset btc --from 2025-01-01 --to 2025-01-31 --interval 1d --vs usd --format csv --output exports/btc-2025-01.csv
+node scripts/cli.js export-history --asset eth --format json
+```
+
+### `repair-gaps`
+
+Find missing candle windows for an asset and enqueue `gap_repair` jobs in the current CLI process. Because the job queue is currently in-memory, these jobs are not inserted into a running server process. The CLI starts its own scheduler, lets the queued repair jobs drain, and reports recent failures before exiting.
+
+Options:
+
+- `--asset` / `--assetId` - required asset ID.
+- `--from` - required start timestamp as `YYYY-MM-DD`, ISO date string, or millisecond timestamp.
+- `--to` - required end timestamp as `YYYY-MM-DD`, ISO date string, or millisecond timestamp.
+- `--interval` - optional candle interval: `5m`, `1h`, or `1d`; defaults to `1d`.
+- `--vs` / `--vsCurrency` - optional quote currency; defaults to the asset's configured `vsCurrency`.
+
+Example:
+
+```bash
+node scripts/cli.js repair-gaps --asset btc --from 2025-01-01 --to 2025-01-31 --interval 1d --vs usd
+```
+
+### `queue-status`
+
+Print the queue-status limitation. The queue is stored in the Express server process memory, so this standalone CLI cannot inspect live queue state without an IPC or HTTP queue-status endpoint. Use the admin dashboard/API queue views while the server is running for live status.
+
+```bash
+node scripts/cli.js queue-status
+npm run queue-status
+```
 
 ## Configuration
 

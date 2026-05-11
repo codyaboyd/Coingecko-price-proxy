@@ -2,12 +2,394 @@
 
 require('dotenv').config();
 
+const fs = require('fs');
+const path = require('path');
+
+const { openDatabase, resolveDatabasePath } = require('../src/db/node-sqlite');
+const { runMigrations } = require('../src/db/migrations');
+const { getPublicAsset, upsertAssets } = require('../src/db/queries');
+const { createScheduler } = require('../src/jobs/scheduler');
+const { chunkMissingWindow } = require('../src/jobs/backfill-job');
+const { getMissingWindows, INTERVAL_STEPS_MS } = require('../src/services/cache-policy');
+const { getHistory, SUPPORTED_INTERVALS } = require('../src/services/history-service');
+const { loadAssets, validateAssetsFile } = require('../src/services/asset-service');
 const { fetchMarketChartRange } = require('../src/services/coingecko');
+const { loadServerConfig } = require('../src/utils/config');
+
+const DEFAULT_EXPORT_FORMAT = 'csv';
+const EXPORT_FORMATS = new Set(['csv', 'json']);
 
 function printUsage() {
   console.log('Usage:');
-  console.log('  scripts/cli.js cg-test <coingecko-id> <vs-currency>');
-  console.log('  npm run cg:test -- <coingecko-id> <vs-currency>');
+  console.log('  node scripts/cli.js migrate');
+  console.log('  node scripts/cli.js validate-assets');
+  console.log('  node scripts/cli.js backup-db');
+  console.log('  node scripts/cli.js export-history --asset <id> [--from <date>] [--to <date>] [--interval <5m|1h|1d>] [--vs <currency>] [--format <csv|json>] [--output <path>]');
+  console.log('  node scripts/cli.js repair-gaps --asset <id> --from <date> --to <date> [--interval <5m|1h|1d>] [--vs <currency>]');
+  console.log('  node scripts/cli.js queue-status');
+  console.log('  node scripts/cli.js cg-test <coingecko-id> <vs-currency>');
+  console.log('');
+  console.log('Options may be passed as --name value or --name=value.');
+}
+
+function parseOptions(args) {
+  const options = { _: [] };
+
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = args[index];
+
+    if (!arg.startsWith('--')) {
+      options._.push(arg);
+      continue;
+    }
+
+    const withoutPrefix = arg.slice(2);
+    const equalsIndex = withoutPrefix.indexOf('=');
+
+    if (equalsIndex !== -1) {
+      options[withoutPrefix.slice(0, equalsIndex)] = withoutPrefix.slice(equalsIndex + 1);
+      continue;
+    }
+
+    const next = args[index + 1];
+
+    if (next === undefined || next.startsWith('--')) {
+      options[withoutPrefix] = true;
+      continue;
+    }
+
+    options[withoutPrefix] = next;
+    index += 1;
+  }
+
+  return options;
+}
+
+function normalizeDateOption(value, field, required) {
+  if (value === undefined || value === null || String(value).trim() === '') {
+    if (required) {
+      throw new Error(`${field} is required.`);
+    }
+
+    return null;
+  }
+
+  const text = String(value).trim();
+
+  if (/^-?\d+$/.test(text)) {
+    const timestamp = Number(text);
+
+    if (Number.isSafeInteger(timestamp)) {
+      return timestamp;
+    }
+
+    throw new Error(`${field} must be a safe millisecond timestamp, YYYY-MM-DD date, or ISO date string.`);
+  }
+
+  const dateOnlyMatch = text.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+
+  if (dateOnlyMatch) {
+    const year = Number(dateOnlyMatch[1]);
+    const monthIndex = Number(dateOnlyMatch[2]) - 1;
+    const day = Number(dateOnlyMatch[3]);
+    const timestamp = field === 'to'
+      ? Date.UTC(year, monthIndex, day, 23, 59, 59, 999)
+      : Date.UTC(year, monthIndex, day, 0, 0, 0, 0);
+    const parsedDate = new Date(timestamp);
+
+    if (
+      parsedDate.getUTCFullYear() === year &&
+      parsedDate.getUTCMonth() === monthIndex &&
+      parsedDate.getUTCDate() === day
+    ) {
+      return timestamp;
+    }
+  }
+
+  const parsed = Date.parse(text);
+
+  if (Number.isFinite(parsed)) {
+    return parsed;
+  }
+
+  throw new Error(`${field} must be a YYYY-MM-DD date, ISO date string, or millisecond timestamp.`);
+}
+
+function normalizeInterval(value, defaultValue = '1d') {
+  const interval = String(value || defaultValue).trim().toLowerCase();
+
+  if (!SUPPORTED_INTERVALS.has(interval)) {
+    throw new Error(`interval must be one of: ${Array.from(SUPPORTED_INTERVALS).join(', ')}.`);
+  }
+
+  return interval;
+}
+
+function formatTimestampForFile(date = new Date()) {
+  const pad = (value) => String(value).padStart(2, '0');
+
+  return [
+    date.getUTCFullYear(),
+    pad(date.getUTCMonth() + 1),
+    pad(date.getUTCDate()),
+    '-',
+    pad(date.getUTCHours()),
+    pad(date.getUTCMinutes()),
+    pad(date.getUTCSeconds())
+  ].join('');
+}
+
+function openConfiguredDatabase(config) {
+  return openDatabase(config.databasePath);
+}
+
+function runMigrate() {
+  const config = loadServerConfig();
+  const db = openConfiguredDatabase(config);
+
+  try {
+    const appliedMigrations = runMigrations(db);
+    const suffix = appliedMigrations.length === 0
+      ? 'no pending migrations'
+      : `${appliedMigrations.length} migration(s) applied`;
+
+    console.log(`Migrations completed for ${config.databasePath}: ${suffix}`);
+  } finally {
+    db.close();
+  }
+}
+
+function runValidateAssets() {
+  const config = loadServerConfig();
+  const assets = validateAssetsFile(config.assetsConfigPath);
+
+  console.log(`Validated ${assets.length} configured assets from ${config.assetsConfigPath}.`);
+}
+
+async function runBackupDb() {
+  const config = loadServerConfig();
+  const sourcePath = resolveDatabasePath(config.databasePath);
+  const backupDir = path.resolve(process.cwd(), 'data', 'backups');
+  const backupPath = path.join(backupDir, `history-${formatTimestampForFile()}.sqlite`);
+
+  if (!fs.existsSync(sourcePath)) {
+    throw new Error(`Database file does not exist: ${sourcePath}`);
+  }
+
+  fs.mkdirSync(backupDir, { recursive: true });
+
+  const db = openConfiguredDatabase(config);
+
+  try {
+    await db.backup(backupPath);
+  } finally {
+    db.close();
+  }
+
+  console.log(`Backed up ${sourcePath} to ${backupPath}.`);
+  return backupPath;
+}
+
+
+function getAssetFromDatabaseOrConfig(db, config, assetId) {
+  const databaseAsset = getPublicAsset(db, assetId);
+
+  if (databaseAsset) {
+    return databaseAsset;
+  }
+
+  const configuredAssets = loadAssets(config.assetsConfigPath);
+  const configuredAsset = configuredAssets.find((asset) => asset.id.toLowerCase() === assetId);
+
+  if (!configuredAsset) {
+    return null;
+  }
+
+  upsertAssets(db, configuredAssets);
+  return getPublicAsset(db, assetId);
+}
+
+function requireAssetOption(options) {
+  const assetId = String(options.asset || options.assetId || '').trim().toLowerCase();
+
+  if (!assetId) {
+    throw new Error('--asset is required.');
+  }
+
+  return assetId;
+}
+
+function csvEscape(value) {
+  if (value === null || value === undefined) {
+    return '';
+  }
+
+  const text = String(value);
+
+  if (/[",\n\r]/.test(text)) {
+    return `"${text.replace(/"/g, '""')}"`;
+  }
+
+  return text;
+}
+
+function serializeCandlesAsCsv(candles) {
+  const headers = [
+    'assetId',
+    'vsCurrency',
+    'interval',
+    'ts',
+    'isoTime',
+    'open',
+    'high',
+    'low',
+    'close',
+    'volume',
+    'marketCap',
+    'fetchedAt',
+    'fetchedAtIso'
+  ];
+  const rows = candles.map((candle) => [
+    candle.assetId,
+    candle.vsCurrency,
+    candle.interval,
+    candle.ts,
+    new Date(candle.ts).toISOString(),
+    candle.open,
+    candle.high,
+    candle.low,
+    candle.close,
+    candle.volume,
+    candle.marketCap,
+    candle.fetchedAt,
+    candle.fetchedAt ? new Date(candle.fetchedAt).toISOString() : ''
+  ].map(csvEscape).join(','));
+
+  return `${headers.join(',')}\n${rows.join('\n')}${rows.length > 0 ? '\n' : ''}`;
+}
+
+function runExportHistory(rawArgs) {
+  const options = parseOptions(rawArgs);
+  const config = loadServerConfig();
+  const db = openConfiguredDatabase(config);
+
+  try {
+    const assetId = requireAssetOption(options);
+    const asset = getAssetFromDatabaseOrConfig(db, config, assetId);
+
+    if (!asset) {
+      throw new Error(`Asset '${assetId}' was not found.`);
+    }
+
+    const fromTs = normalizeDateOption(options.from, 'from', false);
+    const toTs = normalizeDateOption(options.to, 'to', false);
+    const interval = normalizeInterval(options.interval, '1d');
+    const vsCurrency = String(options.vs || options.vsCurrency || asset.vsCurrency).trim().toLowerCase();
+    const format = String(options.format || DEFAULT_EXPORT_FORMAT).trim().toLowerCase();
+
+    if (!EXPORT_FORMATS.has(format)) {
+      throw new Error(`format must be one of: ${Array.from(EXPORT_FORMATS).join(', ')}.`);
+    }
+
+    const candles = getHistory(asset.id, {
+      db,
+      vsCurrency,
+      interval,
+      fromTs,
+      toTs
+    });
+    const output = format === 'json'
+      ? `${JSON.stringify(candles, null, 2)}\n`
+      : serializeCandlesAsCsv(candles);
+
+    if (options.output) {
+      const outputPath = path.resolve(process.cwd(), String(options.output));
+      fs.mkdirSync(path.dirname(outputPath), { recursive: true });
+      fs.writeFileSync(outputPath, output);
+      console.error(`Exported ${candles.length} candle(s) to ${outputPath}.`);
+      return;
+    }
+
+    process.stdout.write(output);
+  } finally {
+    db.close();
+  }
+}
+
+async function waitForSchedulerIdle(scheduler) {
+  while (true) {
+    const status = scheduler.getStatus();
+
+    if (status.depth === 0 && status.activeJobs.length === 0) {
+      return status;
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+}
+
+async function runRepairGaps(rawArgs) {
+  const options = parseOptions(rawArgs);
+  const config = loadServerConfig();
+  const db = openConfiguredDatabase(config);
+
+  try {
+    const assetId = requireAssetOption(options);
+    const asset = getAssetFromDatabaseOrConfig(db, config, assetId);
+
+    if (!asset) {
+      throw new Error(`Asset '${assetId}' was not found.`);
+    }
+
+    if (!asset.coingeckoId) {
+      throw new Error(`Asset '${assetId}' does not have a CoinGecko ID.`);
+    }
+
+    const fromTs = normalizeDateOption(options.from, 'from', true);
+    const toTs = normalizeDateOption(options.to, 'to', true);
+    const interval = normalizeInterval(options.interval, '1d');
+    const vsCurrency = String(options.vs || options.vsCurrency || asset.vsCurrency).trim().toLowerCase();
+
+    if (toTs < fromTs) {
+      throw new Error('to must be greater than or equal to from.');
+    }
+
+    const gaps = getMissingWindows(asset.id, vsCurrency, interval, fromTs, toTs, { db });
+    const chunks = gaps.flatMap((gap) => chunkMissingWindow(gap, interval));
+    const scheduler = createScheduler({ db });
+    const enqueuedJobs = chunks.map((chunk) => scheduler.enqueue('gap_repair', {
+      assetId: asset.id,
+      from: new Date(chunk.from).toISOString(),
+      to: new Date(chunk.to + INTERVAL_STEPS_MS[interval]).toISOString(),
+      interval,
+      vsCurrency,
+      conflictPolicy: 'fill_only_missing',
+      missingFrom: chunk.from,
+      missingTo: chunk.to
+    }, { assetPriority: asset.priority }));
+
+    console.log(`Found ${gaps.length} gap window(s) and enqueued ${enqueuedJobs.length} gap repair job(s).`);
+
+    if (enqueuedJobs.length === 0) {
+      return;
+    }
+
+    const finalStatus = await waitForSchedulerIdle(scheduler);
+    console.log(`Gap repair queue drained. Recent failures: ${finalStatus.recentFailures.length}.`);
+
+    if (finalStatus.recentFailures.length > 0) {
+      process.exitCode = 1;
+      console.log(JSON.stringify(finalStatus.recentFailures, null, 2));
+    }
+  } finally {
+    db.close();
+  }
+}
+
+function runQueueStatus() {
+  console.log('Queue status is kept in the Express server process memory.');
+  console.log('This CLI process cannot inspect a running server queue without an IPC or HTTP status endpoint.');
+  console.log('Start the server and use the admin dashboard/API queue views for live in-memory queue status.');
 }
 
 function getPointCount(value) {
@@ -34,19 +416,69 @@ async function runCoinGeckoTest(args) {
   console.log(`total_volumes: ${getPointCount(result.total_volumes)}`);
 }
 
-async function main() {
-  const [command, ...args] = process.argv.slice(2);
+async function main(argv = process.argv.slice(2)) {
+  const [command, ...args] = argv;
+
+  if (!command || command === 'help' || command === '--help' || command === '-h') {
+    printUsage();
+    process.exitCode = command ? 0 : 1;
+    return;
+  }
+
+  if (command === 'migrate') {
+    runMigrate();
+    return;
+  }
+
+  if (command === 'validate-assets') {
+    runValidateAssets();
+    return;
+  }
+
+  if (command === 'backup-db') {
+    await runBackupDb();
+    return;
+  }
+
+  if (command === 'export-history') {
+    runExportHistory(args);
+    return;
+  }
+
+  if (command === 'repair-gaps') {
+    await runRepairGaps(args);
+    return;
+  }
+
+  if (command === 'queue-status') {
+    runQueueStatus();
+    return;
+  }
 
   if (command === 'cg-test') {
     await runCoinGeckoTest(args);
     return;
   }
 
+  console.error(`Unknown command: ${command}`);
   printUsage();
   process.exitCode = 1;
 }
 
-main().catch((error) => {
-  console.error(error.message);
-  process.exit(1);
-});
+if (require.main === module) {
+  main().catch((error) => {
+    console.error(error.message);
+    process.exit(1);
+  });
+}
+
+module.exports = {
+  main,
+  parseOptions,
+  runBackupDb,
+  runExportHistory,
+  runMigrate,
+  runQueueStatus,
+  runRepairGaps,
+  runValidateAssets
+};
