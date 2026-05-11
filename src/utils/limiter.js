@@ -29,6 +29,17 @@ class RateLimiter {
     this.pausedUntil = 0;
   }
 
+  getStatus(now = Date.now()) {
+    this.removeExpiredCalls(now);
+
+    return {
+      callsUsedThisMinute: this.calls.length,
+      maxCallsPerMinute: this.maxCallsPerMinute,
+      queuedTasks: this.queue.length,
+      pausedUntil: this.pausedUntil > now ? this.pausedUntil : null
+    };
+  }
+
   schedule(task) {
     if (typeof task !== 'function') {
       return Promise.reject(new Error('Limiter task must be a function.'));

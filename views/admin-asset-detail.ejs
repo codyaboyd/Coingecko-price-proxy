@@ -124,7 +124,8 @@
 
                 <div class="d-flex flex-wrap align-items-center gap-2">
                   <button type="button" id="checkExistingButton" class="btn btn-outline-secondary">Check local data</button>
-                  <button type="submit" class="btn btn-primary">Fetch from CoinGecko</button>
+                  <button type="submit" class="btn btn-primary">Queue manual fetch</button>
+                  <button type="button" id="backfillButton" class="btn btn-outline-primary">Queue backfill</button>
                   <span id="fetchStatus" class="badge text-bg-secondary">Not run</span>
                 </div>
               </form>
@@ -132,7 +133,7 @@
               <div id="existingDataSummary" class="alert alert-secondary mt-3 mb-0" role="status">
                 Check local data to see whether candles already exist before fetching.
               </div>
-              <pre id="fetchResponse" class="bg-body-tertiary border rounded p-3 mt-3 mb-0 small" style="min-height: 12rem; white-space: pre-wrap;">Submit the form to POST /api/v1/admin/assets/<%= asset.id %>/fetch.</pre>
+              <pre id="fetchResponse" class="bg-body-tertiary border rounded p-3 mt-3 mb-0 small" style="min-height: 12rem; white-space: pre-wrap;">Queue a manual fetch or backfill for this asset.</pre>
             </div>
           </div>
 
@@ -208,6 +209,7 @@
       const statusBadge = document.getElementById('fetchStatus');
       const responseBody = document.getElementById('fetchResponse');
       const checkExistingButton = document.getElementById('checkExistingButton');
+      const backfillButton = document.getElementById('backfillButton');
       const existingDataSummary = document.getElementById('existingDataSummary');
       const runGapReportButton = document.getElementById('runGapReportButton');
       const gapStatus = document.getElementById('gapStatus');
@@ -332,6 +334,31 @@
         }
       });
 
+      backfillButton.addEventListener('click', async () => {
+        statusBadge.className = 'badge text-bg-secondary';
+        statusBadge.textContent = 'Planning backfill';
+        responseBody.textContent = 'Detecting missing windows and queueing backfill chunks...';
+
+        try {
+          const response = await fetch('/api/v1/admin/assets/<%= encodeURIComponent(asset.id) %>/backfill', {
+            method: 'POST',
+            headers: {
+              Accept: 'application/json',
+              'Content-Type': 'application/json'
+            },
+            body: JSON.stringify(getFetchPayload())
+          });
+          const data = await response.json();
+
+          setBadge(statusBadge, response.ok, `${response.status} ${response.statusText}`);
+          responseBody.textContent = JSON.stringify(data, null, 2);
+        } catch (error) {
+          statusBadge.className = 'badge text-bg-danger';
+          statusBadge.textContent = 'Request failed';
+          responseBody.textContent = error.message;
+        }
+      });
+
       form.addEventListener('submit', async (event) => {
         event.preventDefault();
         statusBadge.className = 'badge text-bg-secondary';
@@ -342,8 +369,8 @@
 
         try {
           const report = await runGapReport({ updateGapPanel: false });
-          responseBody.textContent = `Local data check complete: ${report.foundCount} of ${report.expectedCount} expected candles already exist; ${report.missingCount} are missing.\n\nFetching from CoinGecko...`;
-          statusBadge.textContent = 'Fetching';
+          responseBody.textContent = `Local data check complete: ${report.foundCount} of ${report.expectedCount} expected candles already exist; ${report.missingCount} are missing.\n\nQueueing manual CoinGecko fetch...`;
+          statusBadge.textContent = 'Queueing';
 
           const response = await fetch('/api/v1/admin/assets/<%= encodeURIComponent(asset.id) %>/fetch', {
             method: 'POST',

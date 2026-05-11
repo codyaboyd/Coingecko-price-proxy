@@ -2,13 +2,16 @@ const { createApp } = require('./src/app');
 const { initializeDatabase } = require('./src/db');
 const { countAssets } = require('./src/db/queries');
 const { loadServerConfig } = require('./src/utils/config');
+const { createScheduler } = require('./src/jobs/scheduler');
 const logger = require('./src/utils/logger');
 
 const config = loadServerConfig();
 const db = initializeDatabase(config);
 const app = createApp(config);
+const jobScheduler = createScheduler({ db });
 
 app.set('db', db);
+app.set('jobScheduler', jobScheduler);
 
 const server = app.listen(config.port, config.host, () => {
   logger.info(`${config.appName} listening at http://${config.host}:${config.port}`);
