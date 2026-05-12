@@ -281,7 +281,7 @@ test('system health builder reports dashboard checks', (t) => {
   const checkIds = health.checks.map((check) => check.id);
 
   assert.equal(health.app.version, '0.1.0');
-  assert.ok(['ok', 'warning', 'critical'].includes(health.status));
+  assert.ok(['ok', 'warning', 'degraded', 'critical'].includes(health.status));
   assert.ok(checkIds.includes('server_uptime'));
   assert.ok(checkIds.includes('database_reachable'));
   assert.ok(checkIds.includes('coingecko_rate_limited'));
@@ -289,4 +289,53 @@ test('system health builder reports dashboard checks', (t) => {
   assert.ok(checkIds.includes('latest_backup_time'));
   assert.equal(health.checks.find((check) => check.id === 'enabled_assets').value, 1);
   assert.equal(health.checks.find((check) => check.id === 'assets_config_valid').status, 'ok');
+});
+
+test('system health reports startup degraded mode', (t) => {
+  const db = seedDatabase(t);
+  insertCandles([
+    { ts: Date.UTC(2026, 0, 4), close: 42500 }
+  ], {
+    db,
+    assetId: 'btc',
+    vsCurrency: 'usd',
+    interval: '1d',
+    fetchedAt: Date.UTC(2026, 0, 4)
+  });
+  db.prepare(`
+    INSERT INTO fetch_runs (asset_id, vs_currency, interval, started_at, status, finished_at)
+    VALUES ('btc', 'usd', '1d', @now, 'success', @now)
+  `).run({ now: Date.UTC(2026, 0, 4) });
+  const app = createApp({
+    appName: 'chrono-cache-test',
+    adminTitle: 'chrono-cache-test',
+    databasePath: ':memory:',
+    assetsConfigPath: './config/assets.json',
+    dataDir: './data'
+  });
+  app.set('db', db);
+  app.set('assets', TEST_ASSETS);
+  app.set('startupSelfCheck', {
+    degraded: true,
+    status: 'degraded',
+    generatedAtIso: '2026-01-05T00:00:00.000Z',
+    checks: [
+      {
+        id: 'backup_directory_writable',
+        label: 'Backup directory is writable',
+        severity: 'non-critical',
+        ok: false,
+        summary: 'Permission denied',
+        details: { path: '/not-writable' }
+      }
+    ]
+  });
+
+  const { buildSystemHealth } = require('../src/services/system-health');
+  const health = buildSystemHealth(app, { now: Date.UTC(2026, 0, 5) });
+
+  assert.equal(health.status, 'degraded');
+  assert.equal(health.degraded, true);
+  assert.equal(health.checks.find((check) => check.id === 'startup_mode').summary, 'Degraded mode');
+  assert.equal(health.checks.find((check) => check.id === 'startup_backup_directory_writable').status, 'warning');
 });

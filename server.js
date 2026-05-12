@@ -9,16 +9,28 @@ function formatStartupError(error) {
 }
 
 function start() {
+  const { runStartupSelfCheck, formatSelfCheckResult } = require('./src/services/startup-self-check');
+  const { loadServerConfig } = require('./src/utils/config');
+
+  const config = loadServerConfig();
+  const selfCheck = runStartupSelfCheck({ config });
+
+  if (!selfCheck.ok) {
+    throw new Error(formatSelfCheckResult(selfCheck));
+  }
+
+  if (selfCheck.degraded) {
+    logger.warn(formatSelfCheckResult(selfCheck));
+  }
+
   const { createApp } = require('./src/app');
   const { initializeDatabase } = require('./src/db');
   const { countAssets } = require('./src/db/queries');
   const { loadAssets } = require('./src/services/asset-service');
   const { createHotReloadManager } = require('./src/services/hot-reload');
-  const { loadServerConfig } = require('./src/utils/config');
   const { createScheduler } = require('./src/jobs/scheduler');
   const { createRecentRefreshScheduler } = require('./src/jobs/recent-refresh-scheduler');
 
-  const config = loadServerConfig();
   const assets = loadAssets(config.assetsConfigPath);
   const db = initializeDatabase(config, { syncAssets: false });
   const app = createApp(config);
@@ -37,6 +49,8 @@ function start() {
     assets
   });
 
+  app.set('startupSelfCheck', selfCheck);
+  app.set('degradedMode', selfCheck.degraded);
   app.set('db', db);
   app.set('assets', assets);
   app.set('jobScheduler', jobScheduler);

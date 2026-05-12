@@ -36,6 +36,17 @@ function check(id, label, status, summary, value, details = null) {
   return { id, label, status, summary, value, details };
 }
 
+function startupSelfCheckToHealthCheck(startupCheck) {
+  return check(
+    `startup_${startupCheck.id}`,
+    `Startup self-check: ${startupCheck.label}`,
+    startupCheck.ok ? 'ok' : (startupCheck.severity === 'critical' ? 'critical' : 'warning'),
+    startupCheck.summary,
+    startupCheck.ok,
+    startupCheck.details
+  );
+}
+
 function criticalCheck(id, label, message, details = null) {
   return check(id, label, 'critical', message, null, details);
 }
@@ -220,6 +231,21 @@ function buildSystemHealth(app, options = {}) {
   checks.push(check('runtime', 'Runtime', runtime.name === 'node' || runtime.name === 'bun' ? 'ok' : 'warning', `${runtime.name} ${runtime.version}`, runtime.name, runtime));
   checks.push(check('app_version', 'App version', packageJson.version ? 'ok' : 'warning', packageJson.version || 'Unknown', packageJson.version || null));
 
+  const startupSelfCheck = app.get('startupSelfCheck');
+  if (startupSelfCheck && Array.isArray(startupSelfCheck.checks)) {
+    checks.push(check(
+      'startup_mode',
+      'Startup mode',
+      startupSelfCheck.degraded ? 'warning' : 'ok',
+      startupSelfCheck.degraded ? 'Degraded mode' : 'Normal mode',
+      startupSelfCheck.status,
+      { generatedAtIso: startupSelfCheck.generatedAtIso }
+    ));
+    startupSelfCheck.checks.forEach((startupCheck) => {
+      checks.push(startupSelfCheckToHealthCheck(startupCheck));
+    });
+  }
+
   try {
     if (!db) {
       throw new Error('Database connection is not available.');
@@ -316,13 +342,15 @@ function buildSystemHealth(app, options = {}) {
     checks.push(criticalCheck('latest_backup_time', 'Latest backup time', error.message));
   }
 
-  const statusRank = { ok: 0, warning: 1, critical: 2 };
-  const overallStatus = checks.reduce((current, item) => (
+  const statusRank = { ok: 0, warning: 1, degraded: 1, critical: 2 };
+  const checkStatus = checks.reduce((current, item) => (
     statusRank[item.status] > statusRank[current] ? item.status : current
   ), 'ok');
+  const overallStatus = checkStatus !== 'critical' && startupSelfCheck && startupSelfCheck.degraded ? 'degraded' : checkStatus;
 
   return {
     ok: overallStatus !== 'critical',
+    degraded: overallStatus === 'degraded',
     status: overallStatus,
     generatedAt: now,
     generatedAtIso: nowIso(now),

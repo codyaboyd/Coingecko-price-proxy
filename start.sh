@@ -76,8 +76,8 @@ fi
 echo "Running database migrations..."
 $PACKAGE_RUNNER migrate
 
-echo "Validating assets..."
-$PACKAGE_RUNNER validate-assets
+echo "Running startup self-check..."
+$PACKAGE_RUNNER self-check
 
 echo "Starting ${SESSION_NAME} with ${RUNTIME}. Logs: ${LOG_FILE}"
 screen -dmS "$SESSION_NAME" bash -lc "printf '\n[%s] Starting chrono-cache with ${RUNTIME}\n' \"\$(date -Is)\" >> '${LOG_FILE}'; exec ${RUNTIME} server.js >> '${LOG_FILE}' 2>&1"

@@ -22,8 +22,8 @@
       </div>
     </nav>
 
-    <% const badgeClass = (status) => status === 'ok' ? 'text-bg-success' : (status === 'warning' ? 'text-bg-warning' : 'text-bg-danger'); %>
-    <% const textClass = (status) => status === 'ok' ? 'text-success' : (status === 'warning' ? 'text-warning' : 'text-danger'); %>
+    <% const badgeClass = (status) => status === 'ok' ? 'text-bg-success' : (status === 'warning' || status === 'degraded' ? 'text-bg-warning' : 'text-bg-danger'); %>
+    <% const textClass = (status) => status === 'ok' ? 'text-success' : (status === 'warning' || status === 'degraded' ? 'text-warning' : 'text-danger'); %>
 
     <main class="container py-4 py-md-5">
       <div class="d-flex justify-content-between align-items-start flex-wrap gap-3 mb-4">
