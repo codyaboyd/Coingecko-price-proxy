@@ -6,3 +6,19 @@ body {
 code {
   color: #6f42c1;
 }
+
+.health-card {
+  border-left: 0.35rem solid var(--bs-secondary-border-subtle);
+}
+
+.health-card-ok {
+  border-left-color: var(--bs-success);
+}
+
+.health-card-warning {
+  border-left-color: var(--bs-warning);
+}
+
+.health-card-critical {
+  border-left-color: var(--bs-danger);
+}

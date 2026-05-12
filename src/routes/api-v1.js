@@ -6,6 +6,7 @@ const { getGapReport } = require('../services/cache-policy');
 const { enqueueBackfill } = require('../jobs/backfill-job');
 const { createScheduler } = require('../jobs/scheduler');
 const { assertTimestampRange, DAY_MS, parseDateInput } = require('../utils/date');
+const { buildSystemHealth } = require('../services/system-health');
 const {
   buildHistoryCacheKey,
   getCachedResponse,
@@ -342,6 +343,15 @@ function sendHistoryResponse(res, payload) {
 
   res.json(payload.history);
 }
+
+
+router.get('/admin/system-health', (req, res, next) => {
+  try {
+    res.json(buildSystemHealth(req.app));
+  } catch (error) {
+    next(error);
+  }
+});
 
 router.get('/health', (req, res) => {
   res.json({

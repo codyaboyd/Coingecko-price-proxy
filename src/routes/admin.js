@@ -12,6 +12,7 @@ const { buildRecentRefreshJobs, createRecentRefreshScheduler, normalizeFetchPoli
 const { clearApiCache, getApiCacheStats } = require('../services/api-cache');
 const { fetchMarketChartRange } = require('../services/coingecko');
 const { getGapReport } = require('../services/cache-policy');
+const { buildSystemHealth, bytesToSummary } = require('../services/system-health');
 const { assertTimestampRange, DAY_MS, parseDateInput } = require('../utils/date');
 const logger = require('../utils/logger');
 
@@ -570,6 +571,23 @@ router.get('/reload-status', (req, res, next) => {
           updatedAtIso: formatTimestamp(candidate.updatedAt)
         }))
       }
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+
+router.get('/system-health', (req, res, next) => {
+  try {
+    const config = req.app.get('config');
+    const health = buildSystemHealth(req.app);
+
+    res.render('admin-system-health', {
+      title: `${config.adminTitle} - System Health`,
+      appName: config.appName,
+      health,
+      bytesToSummary
     });
   } catch (error) {
     next(error);

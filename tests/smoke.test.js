@@ -248,3 +248,45 @@ test('history API rejects invalid dates and excessive client request rates', asy
   assert.equal(limitedBody.error.code, 'rate_limited');
   assert.ok(Number(limitedResponse.headers.get('retry-after')) >= 1);
 });
+
+test('system health builder reports dashboard checks', (t) => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'chrono-cache-health-'));
+  const databasePath = path.join(tempDir, 'history.sqlite');
+  const assetsConfigPath = path.join(tempDir, 'assets.json');
+  const dataDir = path.join(tempDir, 'data');
+  const db = openDatabase(databasePath);
+
+  t.after(() => {
+    db.close();
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  });
+
+  fs.mkdirSync(dataDir, { recursive: true });
+  fs.writeFileSync(assetsConfigPath, `${JSON.stringify({ assets: TEST_ASSETS }, null, 2)}\n`);
+  runMigrations(db);
+  upsertAssets(db, TEST_ASSETS, Date.UTC(2026, 0, 1));
+
+  const app = createApp({
+    appName: 'chrono-cache-test',
+    adminTitle: 'chrono-cache-test',
+    databasePath,
+    assetsConfigPath,
+    dataDir
+  });
+  app.set('db', db);
+  app.set('assets', TEST_ASSETS);
+
+  const { buildSystemHealth } = require('../src/services/system-health');
+  const health = buildSystemHealth(app, { now: Date.UTC(2026, 0, 5) });
+  const checkIds = health.checks.map((check) => check.id);
+
+  assert.equal(health.app.version, '0.1.0');
+  assert.ok(['ok', 'warning', 'critical'].includes(health.status));
+  assert.ok(checkIds.includes('server_uptime'));
+  assert.ok(checkIds.includes('database_reachable'));
+  assert.ok(checkIds.includes('coingecko_rate_limited'));
+  assert.ok(checkIds.includes('latest_successful_fetch_per_asset'));
+  assert.ok(checkIds.includes('latest_backup_time'));
+  assert.equal(health.checks.find((check) => check.id === 'enabled_assets').value, 1);
+  assert.equal(health.checks.find((check) => check.id === 'assets_config_valid').status, 'ok');
+});
