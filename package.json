@@ -11,7 +11,7 @@
     "validate-assets": "node scripts/cli.js validate-assets",
     "import": "node scripts/import-history.js",
     "convert": "node scripts/convert.js",
-    "backup": "node scripts/cli.js backup-db",
+    "backup": "node scripts/cli.js backup",
     "seed:fake-btc": "node scripts/seed-fake-btc-candles.js",
     "verify:history": "node scripts/verify-history-service.js",
     "cg:test": "node scripts/cli.js cg-test",
@@ -23,7 +23,9 @@
     "queue-status": "node scripts/cli.js queue-status",
     "test": "node --test tests/smoke.test.js",
     "smoke": "node --test tests/smoke.test.js",
-    "self-check": "node scripts/self-check.js"
+    "self-check": "node scripts/self-check.js",
+    "backups:list": "node scripts/cli.js backups:list",
+    "backups:prune": "node scripts/cli.js backups:prune"
   },
   "keywords": [
     "cache",

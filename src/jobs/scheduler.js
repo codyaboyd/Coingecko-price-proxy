@@ -1,19 +1,22 @@
 const logger = require('../utils/logger');
 const { getGlobalLimiter } = require('../utils/limiter');
 const { FETCH_JOB_TYPES, runFetchHistoryJob } = require('./fetch-history-job');
+const { createBackupService } = require('../services/backup-service');
 
 const JOB_TYPES = new Set([
   'recent_refresh',
   'historical_backfill',
   'gap_repair',
-  'manual_admin_fetch'
+  'manual_admin_fetch',
+  'sqlite_backup'
 ]);
 
 const PRIORITIES = {
   manual_admin_fetch: 1,
   gap_repair: 2,
   recent_refresh: 3,
-  historical_backfill: 4
+  historical_backfill: 4,
+  sqlite_backup: 5
 };
 
 const DEFAULT_FAILURE_LIMIT = 10;
@@ -55,10 +58,76 @@ class JobScheduler {
     this.sequence = 0;
     this.running = false;
     this.limiter = options.limiter || getGlobalLimiter();
+    this.config = options.config || null;
+    this.backupService = options.backupService || (this.config ? createBackupService({ db: this.db, config: this.config }) : null);
+    this.backupTimer = null;
+    this.nextBackupAt = null;
 
     FETCH_JOB_TYPES.forEach((type) => {
       this.handlers.set(type, (job) => runFetchHistoryJob(job, { db: this.db }));
     });
+
+    this.handlers.set('sqlite_backup', () => this.runBackupJob());
+  }
+
+
+  async runBackupJob() {
+    if (!this.backupService) {
+      throw new Error('Backup service is not configured.');
+    }
+
+    const backup = await this.backupService.createBackup();
+    const pruneResult = this.backupService.pruneBackups();
+
+    return {
+      backup,
+      pruneResult
+    };
+  }
+
+  startDailyBackupJob(options = {}) {
+    if (!this.backupService) {
+      throw new Error('Backup service is not configured.');
+    }
+
+    this.stopDailyBackupJob();
+
+    const now = options.now || Date.now();
+    const firstRunAt = options.firstRunAt || this.getNextDailyBackupAt(now);
+    const delay = Math.max(0, firstRunAt - now);
+    this.nextBackupAt = now + delay;
+    this.backupTimer = setTimeout(() => {
+      this.backupTimer = null;
+      this.enqueue('sqlite_backup', { reason: 'daily' });
+      this.startDailyBackupJob();
+    }, delay);
+
+    if (typeof this.backupTimer.unref === 'function') {
+      this.backupTimer.unref();
+    }
+
+    logger.info(`Daily SQLite backup job scheduled for ${new Date(this.nextBackupAt).toISOString()}.`);
+    return this.nextBackupAt;
+  }
+
+  getNextDailyBackupAt(now = Date.now()) {
+    const date = new Date(now);
+    date.setUTCHours(2, 0, 0, 0);
+
+    if (date.getTime() <= now) {
+      date.setUTCDate(date.getUTCDate() + 1);
+    }
+
+    return date.getTime();
+  }
+
+  stopDailyBackupJob() {
+    if (this.backupTimer) {
+      clearTimeout(this.backupTimer);
+      this.backupTimer = null;
+    }
+
+    this.nextBackupAt = null;
   }
 
   register(type, handler) {
@@ -206,7 +275,8 @@ class JobScheduler {
       activeJobs: Array.from(this.activeJobs.values()).map(cloneJob),
       recentFailures: this.recentFailures.map(cloneJob),
       callsUsedThisMinute: limiterStatus.callsUsedThisMinute,
-      limiter: limiterStatus
+      limiter: limiterStatus,
+      nextBackupAt: this.nextBackupAt
     };
   }
 }

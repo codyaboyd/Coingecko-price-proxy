@@ -34,7 +34,7 @@ function start() {
   const assets = loadAssets(config.assetsConfigPath);
   const db = initializeDatabase(config, { syncAssets: false });
   const app = createApp(config);
-  const jobScheduler = createScheduler({ db });
+  const jobScheduler = createScheduler({ db, config });
   const recentRefreshScheduler = createRecentRefreshScheduler({
     db,
     jobScheduler,
@@ -57,6 +57,7 @@ function start() {
   app.set('recentRefreshScheduler', recentRefreshScheduler);
   app.set('hotReloadManager', hotReloadManager);
   recentRefreshScheduler.start();
+  jobScheduler.startDailyBackupJob();
   hotReloadManager.reloadAssetsConfig();
   hotReloadManager.start();
 
@@ -74,6 +75,7 @@ function start() {
   function shutdown(signal) {
     logger.info(`${signal} received, shutting down ${config.appName}`);
     recentRefreshScheduler.stopTimer();
+    jobScheduler.stopDailyBackupJob();
     Promise.resolve(hotReloadManager.stop()).finally(() => {
       server.close(() => {
         db.close();

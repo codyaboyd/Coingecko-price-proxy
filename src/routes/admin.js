@@ -10,6 +10,7 @@ const { ensureDirectory, resolveFromRoot } = require('../utils/files');
 const { createScheduler } = require('../jobs/scheduler');
 const { buildRecentRefreshJobs, createRecentRefreshScheduler, normalizeFetchPolicy } = require('../jobs/recent-refresh-scheduler');
 const { clearApiCache, getApiCacheStats } = require('../services/api-cache');
+const { createBackupService } = require('../services/backup-service');
 const { fetchMarketChartRange } = require('../services/coingecko');
 const { getGapReport } = require('../services/cache-policy');
 const { buildSystemHealth, bytesToSummary } = require('../services/system-health');
@@ -257,7 +258,7 @@ function getScheduler(req) {
   let scheduler = req.app.get('jobScheduler');
 
   if (!scheduler) {
-    scheduler = createScheduler({ db: getDatabase(req) });
+    scheduler = createScheduler({ db: getDatabase(req), config: req.app.get('config') });
     req.app.set('jobScheduler', scheduler);
   }
 
@@ -289,6 +290,45 @@ function redirectWithCacheAction(res, action, details) {
   }
 
   res.redirect(`/admin?${params.toString()}`);
+}
+
+
+function getBackupService(req) {
+  const scheduler = getScheduler(req);
+
+  if (scheduler.backupService) {
+    return scheduler.backupService;
+  }
+
+  scheduler.backupService = createBackupService({
+    db: getDatabase(req),
+    config: req.app.get('config')
+  });
+
+  return scheduler.backupService;
+}
+
+function redirectWithBackupAction(res, action, details) {
+  const params = new URLSearchParams({ backupAction: action });
+
+  if (details) {
+    params.set('backupDetails', details);
+  }
+
+  res.redirect(`/admin/backups?${params.toString()}`);
+}
+
+function formatBackupForView(backup) {
+  return {
+    ...backup,
+    createdAtIso: backup.createdAt,
+    sizeLabel: bytesToSummary(backup.sizeBytes),
+    files: backup.files.map((file) => ({
+      ...file,
+      sizeLabel: bytesToSummary(file.sizeBytes),
+      updatedAtIso: formatTimestamp(file.updatedAt)
+    }))
+  };
 }
 
 function redirectWithSchedulerAction(res, action, details) {
@@ -531,6 +571,63 @@ router.post('/imports/run', (req, res, next) => {
       policy: req.body.policy,
       error: error.message
     });
+  }
+});
+
+
+router.get('/backups', (req, res, next) => {
+  try {
+    const config = req.app.get('config');
+    const backupService = getBackupService(req);
+    const queue = getScheduler(req).getStatus();
+    const backups = backupService.listBackups().map(formatBackupForView);
+
+    res.render('admin-backups', {
+      title: `${config.adminTitle} - Backups`,
+      appName: config.appName,
+      backups,
+      nextBackupAtIso: formatTimestamp(queue.nextBackupAt),
+      backupAction: req.query.backupAction || null,
+      backupDetails: req.query.backupDetails || null
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.post('/backups/create', async (req, res, next) => {
+  try {
+    const backup = await getBackupService(req).createBackup();
+    redirectWithBackupAction(res, 'created', backup.fileName);
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.post('/backups/prune', (req, res, next) => {
+  try {
+    const result = getBackupService(req).pruneBackups();
+    redirectWithBackupAction(res, 'pruned', `${result.pruned} backup(s), ${result.deletedFiles} file(s) deleted`);
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.get('/backups/download/:file', (req, res, next) => {
+  try {
+    const filePath = getBackupService(req).resolveBackupFile(req.params.file);
+    res.download(filePath, path.basename(filePath));
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.post('/backups/:id/delete', (req, res, next) => {
+  try {
+    const result = getBackupService(req).deleteBackup(req.params.id);
+    redirectWithBackupAction(res, 'deleted', `${result.baseName}: ${result.deleted} file(s) deleted`);
+  } catch (error) {
+    next(error);
   }
 });
 
