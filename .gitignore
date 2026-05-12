@@ -4,3 +4,5 @@ data/*.sqlite
 data/*.sqlite-*
 logs/*.log
 .DS_Store
+
+data/backups/

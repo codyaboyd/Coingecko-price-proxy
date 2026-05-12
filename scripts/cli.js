@@ -5,7 +5,7 @@ require('dotenv').config();
 const fs = require('fs');
 const path = require('path');
 
-const { openDatabase, resolveDatabasePath } = require('../src/db/node-sqlite');
+const { openDatabase } = require('../src/db/node-sqlite');
 const { runMigrations } = require('../src/db/migrations');
 const { getPublicAsset, upsertAssets } = require('../src/db/queries');
 const { createScheduler } = require('../src/jobs/scheduler');
@@ -14,6 +14,7 @@ const { getMissingWindows, INTERVAL_STEPS_MS } = require('../src/services/cache-
 const { getHistory, SUPPORTED_INTERVALS } = require('../src/services/history-service');
 const { loadAssets, validateAssetsFile } = require('../src/services/asset-service');
 const { fetchMarketChartRange } = require('../src/services/coingecko');
+const { createBackupService } = require('../src/services/backup-service');
 const { loadServerConfig } = require('../src/utils/config');
 
 const DEFAULT_EXPORT_FORMAT = 'csv';
@@ -23,7 +24,9 @@ function printUsage() {
   console.log('Usage:');
   console.log('  node scripts/cli.js migrate');
   console.log('  node scripts/cli.js validate-assets');
-  console.log('  node scripts/cli.js backup-db');
+  console.log('  node scripts/cli.js backup');
+  console.log('  node scripts/cli.js backups:list');
+  console.log('  node scripts/cli.js backups:prune');
   console.log('  node scripts/cli.js export-history --asset <id> [--from <date>] [--to <date>] [--interval <5m|1h|1d>] [--vs <currency>] [--format <csv|json>] [--output <path>]');
   console.log('  node scripts/cli.js repair-gaps --asset <id> --from <date> --to <date> [--interval <5m|1h|1d>] [--vs <currency>]');
   console.log('  node scripts/cli.js queue-status');
@@ -125,20 +128,6 @@ function normalizeInterval(value, defaultValue = '1d') {
   return interval;
 }
 
-function formatTimestampForFile(date = new Date()) {
-  const pad = (value) => String(value).padStart(2, '0');
-
-  return [
-    date.getUTCFullYear(),
-    pad(date.getUTCMonth() + 1),
-    pad(date.getUTCDate()),
-    '-',
-    pad(date.getUTCHours()),
-    pad(date.getUTCMinutes()),
-    pad(date.getUTCSeconds())
-  ].join('');
-}
-
 function openConfiguredDatabase(config) {
   return openDatabase(config.databasePath);
 }
@@ -168,28 +157,40 @@ function runValidateAssets() {
 
 async function runBackupDb() {
   const config = loadServerConfig();
-  const sourcePath = resolveDatabasePath(config.databasePath);
-  const backupDir = path.resolve(process.cwd(), 'data', 'backups');
-  const backupPath = path.join(backupDir, `history-${formatTimestampForFile()}.sqlite`);
-
-  if (!fs.existsSync(sourcePath)) {
-    throw new Error(`Database file does not exist: ${sourcePath}`);
-  }
-
-  fs.mkdirSync(backupDir, { recursive: true });
-
   const db = openConfiguredDatabase(config);
 
   try {
-    await db.backup(backupPath);
+    const backup = await createBackupService({ config, db }).createBackup();
+    console.log(`Created backup ${backup.relativePath}.`);
+    return backup.path;
   } finally {
     db.close();
   }
-
-  console.log(`Backed up ${sourcePath} to ${backupPath}.`);
-  return backupPath;
 }
 
+function runListBackups() {
+  const config = loadServerConfig();
+  const backups = createBackupService({ config }).listBackups();
+
+  if (backups.length === 0) {
+    console.log('No backups found.');
+    return backups;
+  }
+
+  backups.forEach((backup) => {
+    console.log(`${backup.fileName}\t${backup.createdAt || 'unknown'}\t${backup.sizeBytes} bytes`);
+  });
+
+  return backups;
+}
+
+function runPruneBackups() {
+  const config = loadServerConfig();
+  const result = createBackupService({ config }).pruneBackups();
+
+  console.log(`Pruned ${result.pruned} backup(s); deleted ${result.deletedFiles} file(s); kept ${result.kept} backup(s).`);
+  return result;
+}
 
 function getAssetFromDatabaseOrConfig(db, config, assetId) {
   const databaseAsset = getPublicAsset(db, assetId);
@@ -435,8 +436,18 @@ async function main(argv = process.argv.slice(2)) {
     return;
   }
 
-  if (command === 'backup-db') {
+  if (command === 'backup' || command === 'backup-db') {
     await runBackupDb();
+    return;
+  }
+
+  if (command === 'backups:list') {
+    runListBackups();
+    return;
+  }
+
+  if (command === 'backups:prune') {
+    runPruneBackups();
     return;
   }
 
@@ -477,7 +488,9 @@ module.exports = {
   parseOptions,
   runBackupDb,
   runExportHistory,
+  runListBackups,
   runMigrate,
+  runPruneBackups,
   runQueueStatus,
   runRepairGaps,
   runValidateAssets

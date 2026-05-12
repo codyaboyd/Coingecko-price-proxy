@@ -1,0 +1,126 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title><%= title %></title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="/public/css/app.css" rel="stylesheet">
+  </head>
+  <body>
+    <nav class="navbar navbar-expand-lg bg-dark navbar-dark">
+      <div class="container">
+        <a class="navbar-brand" href="/admin"><%= appName %></a>
+        <div class="navbar-nav ms-auto">
+          <a class="nav-link" href="/admin/assets">Assets</a>
+          <a class="nav-link" href="/admin/imports">Imports</a>
+          <a class="nav-link active" aria-current="page" href="/admin/backups">Backups</a>
+          <a class="nav-link" href="/admin/reload-status">Reload Status</a>
+          <a class="nav-link" href="/admin/system-health">System Health</a>
+          <a class="nav-link" href="/admin/api-test">API Test</a>
+          <a class="nav-link" href="/admin/logout">Logout</a>
+        </div>
+      </div>
+    </nav>
+
+    <main class="container py-5">
+      <div class="d-flex justify-content-between align-items-start flex-wrap gap-3 mb-4">
+        <div>
+          <h1 class="display-6 fw-bold mb-2">SQLite backups</h1>
+          <p class="lead mb-0">Create, download, prune, and delete database backups stored in <code>data/backups/</code>.</p>
+          <p class="text-secondary mb-0">Next automatic daily backup: <%= nextBackupAtIso || 'not scheduled' %></p>
+        </div>
+        <div class="d-flex gap-2">
+          <form method="post" action="/admin/backups/create">
+            <button type="submit" class="btn btn-primary">Create backup now</button>
+          </form>
+          <form method="post" action="/admin/backups/prune">
+            <button type="submit" class="btn btn-outline-secondary">Prune backups</button>
+          </form>
+        </div>
+      </div>
+
+      <% if (backupAction) { %>
+        <div class="alert alert-info alert-dismissible fade show" role="alert">
+          Backup action: <strong><%= backupAction %></strong><% if (backupDetails) { %> — <%= backupDetails %><% } %>
+          <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+        </div>
+      <% } %>
+
+      <div class="card shadow-sm">
+        <div class="card-header bg-white d-flex justify-content-between align-items-center flex-wrap gap-2">
+          <div>
+            <h2 class="h5 mb-1">Backup list</h2>
+            <p class="small text-secondary mb-0">Each backup includes the SQLite file, manifest, assets config, server config, and <code>.env.example</code>.</p>
+          </div>
+          <span class="badge text-bg-secondary"><%= backups.length %> backup(s)</span>
+        </div>
+        <div class="table-responsive">
+          <table class="table table-striped align-middle mb-0">
+            <thead>
+              <tr>
+                <th scope="col">Backup</th>
+                <th scope="col">Created</th>
+                <th scope="col">Size</th>
+                <th scope="col">Manifest</th>
+                <th scope="col" class="text-end">Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              <% if (backups.length === 0) { %>
+                <tr>
+                  <td colspan="5" class="text-center text-secondary py-5">No backups found.</td>
+                </tr>
+              <% } %>
+              <% backups.forEach((backup) => { %>
+                <tr>
+                  <td>
+                    <div class="fw-semibold"><%= backup.fileName %></div>
+                    <code class="small"><%= backup.relativePath %></code>
+                    <% if (backup.files.length > 1) { %>
+                      <details class="mt-2">
+                        <summary class="small text-secondary">Included files</summary>
+                        <ul class="small mb-0 mt-2">
+                          <% backup.files.forEach((file) => { %>
+                            <li>
+                              <a href="/admin/backups/download/<%= encodeURIComponent(file.name) %>"><%= file.name %></a>
+                              <span class="text-secondary">(<%= file.sizeLabel %>)</span>
+                            </li>
+                          <% }) %>
+                        </ul>
+                      </details>
+                    <% } %>
+                  </td>
+                  <td><%= backup.createdAtIso || 'Unknown' %></td>
+                  <td><%= backup.sizeLabel %></td>
+                  <td>
+                    <% if (backup.manifest) { %>
+                      <dl class="small mb-0">
+                        <dt>Assets</dt>
+                        <dd><%= backup.manifest.assetCount %></dd>
+                        <dt>Candles</dt>
+                        <dd><%= backup.manifest.candleCount %></dd>
+                        <dt>Version</dt>
+                        <dd><%= backup.manifest.appVersion || 'Unknown' %></dd>
+                      </dl>
+                    <% } else { %>
+                      <span class="badge text-bg-warning">Missing manifest</span>
+                    <% } %>
+                  </td>
+                  <td class="text-end">
+                    <a class="btn btn-sm btn-outline-primary" href="/admin/backups/download/<%= encodeURIComponent(backup.fileName) %>">Download</a>
+                    <form class="d-inline" method="post" action="/admin/backups/<%= encodeURIComponent(backup.id) %>/delete" onsubmit="return confirm('Delete backup <%= backup.fileName %> and its manifest/config copies?');">
+                      <button type="submit" class="btn btn-sm btn-outline-danger">Delete</button>
+                    </form>
+                  </td>
+                </tr>
+              <% }) %>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </main>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+  </body>
+</html>
