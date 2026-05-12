@@ -22,7 +22,8 @@
     "repair-gaps": "node scripts/cli.js repair-gaps",
     "queue-status": "node scripts/cli.js queue-status",
     "test": "node --test tests/smoke.test.js",
-    "smoke": "node --test tests/smoke.test.js"
+    "smoke": "node --test tests/smoke.test.js",
+    "self-check": "node scripts/self-check.js"
   },
   "keywords": [
     "cache",
