@@ -175,3 +175,49 @@ test('gap detector finds missing candles', (t) => {
     count: 1
   }]);
 });
+
+test('history API rejects invalid dates and excessive client request rates', async (t) => {
+  const previousMax = process.env.API_RATE_LIMIT_MAX;
+  const previousWindow = process.env.API_RATE_LIMIT_WINDOW_MS;
+  process.env.API_RATE_LIMIT_MAX = '2';
+  process.env.API_RATE_LIMIT_WINDOW_MS = '60000';
+
+  t.after(() => {
+    if (previousMax === undefined) {
+      delete process.env.API_RATE_LIMIT_MAX;
+    } else {
+      process.env.API_RATE_LIMIT_MAX = previousMax;
+    }
+
+    if (previousWindow === undefined) {
+      delete process.env.API_RATE_LIMIT_WINDOW_MS;
+    } else {
+      process.env.API_RATE_LIMIT_WINDOW_MS = previousWindow;
+    }
+  });
+
+  const db = seedDatabase(t);
+  const app = createApp({ appName: 'chrono-cache-test' });
+  app.set('db', db);
+
+  const server = app.listen(0);
+  t.after(() => server.close());
+  await new Promise((resolve) => server.once('listening', resolve));
+
+  const { port } = server.address();
+  const baseUrl = `http://127.0.0.1:${port}`;
+  const invalidDateResponse = await fetch(`${baseUrl}/api/v1/history/btc?from=2026-02-30&to=2026-03-01`);
+  const invalidDateBody = await invalidDateResponse.json();
+
+  assert.equal(invalidDateResponse.status, 400);
+  assert.equal(invalidDateBody.error.code, 'invalid_from');
+
+  const okResponse = await fetch(`${baseUrl}/api/v1/assets`);
+  const limitedResponse = await fetch(`${baseUrl}/api/v1/assets`);
+  const limitedBody = await limitedResponse.json();
+
+  assert.equal(okResponse.status, 200);
+  assert.equal(limitedResponse.status, 429);
+  assert.equal(limitedBody.error.code, 'rate_limited');
+  assert.ok(Number(limitedResponse.headers.get('retry-after')) >= 1);
+});

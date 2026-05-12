@@ -259,3 +259,135 @@ npm run queue-status
 ## Notes
 
 Bun compatibility is allowed for the future, but this scaffold avoids Bun-only APIs and uses Node.js as the default runtime.
+
+## Operations Guide
+
+### Architecture
+
+Chrono Cache is a plain JavaScript Node.js/Express app backed by SQLite. The public API serves cached candle history from the local database, while the Bootstrap 5 admin UI manages assets, imports, backfill requests, cache state, and scheduler status. Runtime responsibilities are split across:
+
+- `server.js` for startup, shutdown, and fatal startup reporting.
+- `src/app.js` for Express middleware, Bootstrap-compatible server-rendered views, API routes, request logging, and in-memory API rate limiting.
+- `src/db/` for SQLite connection setup, migrations, and query helpers.
+- `src/services/` for CoinGecko access, import conversion, candle normalization, cache policy, history reads/writes, and config hot reload.
+- `src/jobs/` for the in-memory fetch/backfill scheduler and recent-refresh scheduler.
+- `config/` for server and asset configuration.
+- `data/` for SQLite data, backups, and import files.
+
+### Setup
+
+1. Install Node.js 20 or newer.
+2. Install dependencies:
+
+   ```bash
+   npm install
+   ```
+
+3. Review `config/server.json` and `config/assets.json`.
+4. Optionally create a `.env` file for secrets and overrides such as admin credentials, `COINGECKO_API_KEY`, `COINGECKO_API_KEY_TYPE`, `COINGECKO_MAX_CALLS_PER_MINUTE`, and API rate-limit settings.
+5. Initialize or upgrade the database:
+
+   ```bash
+   npm run migrate
+   ```
+
+6. Validate assets:
+
+   ```bash
+   npm run validate-assets
+   ```
+
+7. Start the app:
+
+   ```bash
+   npm start
+   ```
+
+Startup failures are logged with the failing phase and file/path details where available. Invalid JSON config files and invalid asset configs fail fast at startup, but invalid hot-reload edits are rejected without replacing the last valid in-memory config.
+
+### Running with `screen`
+
+A simple long-running deployment can use GNU screen:
+
+```bash
+cd /path/to/chrono-cache
+screen -S chrono-cache
+npm start
+```
+
+Detach with `Ctrl+A`, then `D`. Reattach with:
+
+```bash
+screen -r chrono-cache
+```
+
+To stop the app, reattach and press `Ctrl+C`, or run:
+
+```bash
+screen -S chrono-cache -X quit
+```
+
+The repository also includes `start.sh`, `stop.sh`, and `restart.sh` helpers if you prefer script-based operation.
+
+### Admin Usage
+
+Open `/admin` in a browser and sign in with the configured admin username and password. The admin UI remains server-rendered Bootstrap 5 and provides:
+
+- Dashboard status for assets, scheduler queue depth, recent failures, API cache stats, and hot-reload state.
+- Asset list/detail pages with candle bounds and fetch-run history.
+- Asset edit forms that validate fields, write a timestamped config backup, and reload safe in-memory state.
+- CoinGecko test fetch, local history test, gap-report test, and recent-refresh enqueue actions.
+- Import preview/import pages limited to files under `data/imports`.
+
+### API Usage
+
+Public endpoints are under `/api/v1`:
+
+```bash
+curl http://127.0.0.1:3000/api/v1/health
+curl http://127.0.0.1:3000/api/v1/assets
+curl 'http://127.0.0.1:3000/api/v1/history/btc?interval=1d&from=2026-01-01&to=2026-01-31&limit=1000'
+```
+
+History parameters:
+
+- `interval`: `5m`, `1h`, or `1d`.
+- `from` / `to`: `YYYY-MM-DD`, millisecond timestamp, or ISO-8601 timestamp with timezone.
+- `vs`: 2-20 character quote currency code; defaults to the asset config.
+- `format`: `json` or `csv`.
+- `fill`: `none` or `previous`.
+- `limit`: defaults to `1000`, maximum `5000`.
+
+The API applies in-memory per-client rate limiting. Limited responses return HTTP `429`, `Retry-After`, and `RateLimit-*` headers. CoinGecko `429` responses pause the shared CoinGecko queue and retry with backoff instead of crashing the app.
+
+### Import Workflow
+
+1. Copy CSV or JSON files into `data/imports`.
+2. Open `/admin/imports`.
+3. Select a file, asset, interval, and conflict policy.
+4. Review the preview.
+5. Run the import.
+
+Import preview and import execution resolve real paths and reject absolute paths, `..` traversal, oversized files, non-files, and symlinks that point outside `data/imports`. Raw dumps are converted into `.normalized.json` files under `data/imports/converted`; normalized imports are written to SQLite and recorded in `import_runs`.
+
+### Backfill Workflow
+
+Use the admin asset page or the authenticated admin API to find gaps and enqueue backfill jobs. Backfill requests validate dates, interval, quote currency, conflict policy, maximum range, and maximum job count before queueing work. Jobs run in process memory and call CoinGecko through the shared limiter, so restarts clear queued jobs that have not started.
+
+Example admin API request after login/session setup:
+
+```bash
+curl -X POST http://127.0.0.1:3000/api/v1/admin/assets/btc/backfill \
+  -H 'Content-Type: application/json' \
+  -d '{"from":"2026-01-01","to":"2026-01-31","interval":"1d","vsCurrency":"usd","conflictPolicy":"fill_only_missing"}'
+```
+
+### Troubleshooting
+
+- **Startup fails immediately:** check the logged file path and message for invalid JSON, missing config, invalid port, failed SQLite open, or invalid assets.
+- **Hot reload shows an error:** fix `config/assets.json` or `config/server.json`; the app keeps using the last valid config until a valid file is saved.
+- **API returns `429`:** slow clients down or increase `API_RATE_LIMIT_MAX` / `API_RATE_LIMIT_WINDOW_MS` if the deployment needs a higher in-memory limit.
+- **CoinGecko requests fail or return `429`:** verify API key type/key, reduce `COINGECKO_MAX_CALLS_PER_MINUTE`, and review scheduler recent failures in the admin dashboard.
+- **Import preview fails:** ensure the file is inside `data/imports`, is not a symlink outside that directory, is below the admin import size cap, and contains supported CSV/JSON columns.
+- **Backfill queues too many jobs:** narrow the date range, use a coarser interval, or increase chunk size intentionally in code/config before retrying.
+- **No live queue from CLI:** the scheduler is in-memory inside the server process; use the admin dashboard/API for live queue status.

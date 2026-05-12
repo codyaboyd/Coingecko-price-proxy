@@ -112,6 +112,24 @@ function isRetryableStatus(status) {
   return status === 408 || status === 429 || (status >= 500 && status <= 599);
 }
 
+function buildCoinGeckoError(message, details = {}) {
+  const error = new Error(message);
+  Object.entries(details).forEach(([key, value]) => {
+    if (value !== undefined) {
+      error[key] = value;
+    }
+  });
+  return error;
+}
+
+async function readResponseText(response) {
+  try {
+    return await response.text();
+  } catch (error) {
+    return `Unable to read response body: ${error.message}`;
+  }
+}
+
 function createCoinGeckoClient(options = {}) {
   const baseUrl = normalizeBaseUrl(options.baseUrl || process.env.COINGECKO_API_BASE);
   const apiKey = options.apiKey || process.env.COINGECKO_API_KEY || '';
@@ -150,19 +168,25 @@ function createCoinGeckoClient(options = {}) {
         }));
 
         if (response.ok) {
-          return response.json();
+          try {
+            return await response.json();
+          } catch (error) {
+            throw buildCoinGeckoError(`CoinGecko returned invalid JSON: ${error.message}`, { code: 'coingecko_invalid_json' });
+          }
         }
 
-        const responseBody = await response.text();
-        const error = new Error(`CoinGecko request failed with HTTP ${response.status}: ${responseBody.slice(0, 300)}`);
-        error.status = response.status;
+        const responseBody = await readResponseText(response);
+        const retryAfterMs = response.status === 429 ? getRetryAfterMs(response) : null;
+        const error = buildCoinGeckoError(`CoinGecko request failed with HTTP ${response.status}: ${responseBody.slice(0, 300)}`, {
+          status: response.status,
+          code: response.status === 429 ? 'coingecko_rate_limited' : 'coingecko_request_failed',
+          retryAfterMs
+        });
         lastError = error;
 
         if (!isRetryableStatus(response.status) || attempt >= retries) {
           throw error;
         }
-
-        const retryAfterMs = response.status === 429 ? getRetryAfterMs(response) : null;
 
         if (response.status === 429) {
           const pauseMs = Math.max(rateLimitPauseMs, retryAfterMs || 0);
@@ -172,6 +196,11 @@ function createCoinGeckoClient(options = {}) {
 
         await sleep(getBackoffMs(attempt, baseBackoffMs, retryAfterMs));
       } catch (error) {
+        if (error.name === 'AbortError') {
+          error.message = `CoinGecko request timed out after ${timeoutMs}ms.`;
+          error.code = 'coingecko_timeout';
+        }
+
         lastError = error;
 
         if (error.status && (!isRetryableStatus(error.status) || attempt >= retries)) {
@@ -182,6 +211,7 @@ function createCoinGeckoClient(options = {}) {
           throw error;
         }
 
+        logger.warn(`CoinGecko request attempt ${attempt + 1} failed: ${error.message}`);
         await sleep(getBackoffMs(attempt, baseBackoffMs));
       } finally {
         clearTimeout(timeout);

@@ -7,8 +7,21 @@ function resolveFromRoot(filePath) {
 
 function readJsonFile(filePath) {
   const resolvedPath = resolveFromRoot(filePath);
-  const raw = fs.readFileSync(resolvedPath, 'utf8');
-  return JSON.parse(raw);
+
+  try {
+    const raw = fs.readFileSync(resolvedPath, 'utf8');
+    return JSON.parse(raw);
+  } catch (error) {
+    if (error.code === 'ENOENT') {
+      throw new Error(`JSON config file not found: ${resolvedPath}`);
+    }
+
+    if (error instanceof SyntaxError) {
+      throw new Error(`Invalid JSON in ${resolvedPath}: ${error.message}`);
+    }
+
+    throw new Error(`Unable to read JSON file ${resolvedPath}: ${error.message}`);
+  }
 }
 
 function ensureDirectory(dirPath) {

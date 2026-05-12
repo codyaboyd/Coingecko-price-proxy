@@ -9,6 +9,7 @@ const healthRoutes = require('./routes/health');
 const { errorHandler, notFoundHandler } = require('./middleware/error-handlers');
 const { requireAdminSession } = require('./middleware/auth');
 const { requestLogger } = require('./middleware/request-logger');
+const { createRateLimit } = require('./middleware/rate-limit');
 
 function createApp(config) {
   const app = express();
@@ -28,11 +29,12 @@ function createApp(config) {
     }
   }));
   app.use(requestLogger);
-  app.use(express.urlencoded({ extended: false }));
-  app.use(express.json());
+  app.use(express.urlencoded({ extended: false, limit: '100kb' }));
+  app.use(express.json({ limit: '100kb' }));
   app.use('/public', express.static(path.join(process.cwd(), 'public')));
 
   app.use('/admin', adminAuthRoutes);
+  app.use('/api/v1', createRateLimit());
   app.use('/api/v1/admin', requireAdminSession({ api: true }));
   app.use('/api/v1', apiV1Routes);
   app.use('/health', healthRoutes);

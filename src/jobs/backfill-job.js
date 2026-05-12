@@ -1,9 +1,12 @@
 const { getPublicAsset } = require('../db/queries');
 const { getMissingWindows, INTERVAL_STEPS_MS } = require('../services/cache-policy');
-const { SUPPORTED_INTERVALS } = require('../services/history-service');
+const { SUPPORTED_INTERVALS, CONFLICT_POLICIES } = require('../services/history-service');
+const { assertTimestampRange, DAY_MS, parseDateInput } = require('../utils/date');
 
 const DEFAULT_INTERVAL = '1d';
 const DEFAULT_CONFLICT_POLICY = 'fill_only_missing';
+const MAX_BACKFILL_RANGE_MS = 20 * 366 * DAY_MS;
+const MAX_BACKFILL_CHUNKS = 500;
 const DEFAULT_CHUNK_DAYS_BY_INTERVAL = {
   '5m': 1,
   '1h': 30,
@@ -18,48 +21,26 @@ function createValidationError(code, message) {
 }
 
 function parseDate(value, field) {
-  if (typeof value !== 'string' || value.trim() === '') {
-    throw createValidationError(`invalid_${field}`, `${field} must be a YYYY-MM-DD date or ISO date string.`);
+  try {
+    return parseDateInput(value, field, { required: true });
+  } catch (error) {
+    throw createValidationError(error.code || `invalid_${field}`, error.message);
+  }
+}
+
+
+function normalizeChoice(value, defaultValue, allowedValues, field) {
+  const normalized = String(value || defaultValue).trim().toLowerCase();
+
+  if (!allowedValues.includes(normalized)) {
+    throw createValidationError(`invalid_${field}`, `${field} must be one of: ${allowedValues.join(', ')}.`);
   }
 
-  const text = value.trim();
-  const dateOnlyMatch = text.match(/^(\d{4})-(\d{2})-(\d{2})$/);
-
-  if (dateOnlyMatch) {
-    const year = Number(dateOnlyMatch[1]);
-    const monthIndex = Number(dateOnlyMatch[2]) - 1;
-    const day = Number(dateOnlyMatch[3]);
-    const timestamp = field === 'to'
-      ? Date.UTC(year, monthIndex, day, 23, 59, 59, 999)
-      : Date.UTC(year, monthIndex, day, 0, 0, 0, 0);
-    const parsed = new Date(timestamp);
-
-    if (
-      parsed.getUTCFullYear() === year &&
-      parsed.getUTCMonth() === monthIndex &&
-      parsed.getUTCDate() === day
-    ) {
-      return timestamp;
-    }
-  }
-
-  const parsed = Date.parse(text);
-
-  if (Number.isFinite(parsed)) {
-    return parsed;
-  }
-
-  throw createValidationError(`invalid_${field}`, `${field} must be a YYYY-MM-DD date or ISO date string.`);
+  return normalized;
 }
 
 function normalizeInterval(value) {
-  const interval = String(value || DEFAULT_INTERVAL).trim().toLowerCase();
-
-  if (!SUPPORTED_INTERVALS.has(interval)) {
-    throw createValidationError('invalid_interval', `interval must be one of: ${Array.from(SUPPORTED_INTERVALS).join(', ')}.`);
-  }
-
-  return interval;
+  return normalizeChoice(value, DEFAULT_INTERVAL, Array.from(SUPPORTED_INTERVALS), 'interval');
 }
 
 function normalizeRequest(body = {}, asset) {
@@ -72,8 +53,13 @@ function normalizeRequest(body = {}, asset) {
     throw createValidationError('invalid_vsCurrency', 'vsCurrency must be a non-empty currency code.');
   }
 
-  if (toTs < fromTs) {
-    throw createValidationError('invalid_range', 'to must be greater than or equal to from.');
+  try {
+    assertTimestampRange(fromTs, toTs, {
+      maxSpanMs: MAX_BACKFILL_RANGE_MS,
+      maxSpanMessage: 'Backfill range must be 20 years or less.'
+    });
+  } catch (error) {
+    throw createValidationError(error.code || 'invalid_range', error.message);
   }
 
   return {
@@ -81,7 +67,7 @@ function normalizeRequest(body = {}, asset) {
     toTs,
     interval,
     vsCurrency,
-    conflictPolicy: body.conflictPolicy || DEFAULT_CONFLICT_POLICY
+    conflictPolicy: normalizeChoice(body.conflictPolicy, DEFAULT_CONFLICT_POLICY, Array.from(CONFLICT_POLICIES), 'conflictPolicy')
   };
 }
 
@@ -127,6 +113,10 @@ function enqueueBackfill(db, scheduler, assetId, body = {}, options = {}) {
   const request = normalizeRequest(body, asset);
   const gaps = getMissingWindows(asset.id, request.vsCurrency, request.interval, request.fromTs, request.toTs, { db });
   const chunks = gaps.flatMap((gap) => chunkMissingWindow(gap, request.interval, options));
+  if (chunks.length > MAX_BACKFILL_CHUNKS) {
+    throw createValidationError('too_many_backfill_chunks', `Backfill would enqueue ${chunks.length} jobs; narrow the range or use a coarser interval.`);
+  }
+
   const enqueuedJobs = chunks.map((chunk) => scheduler.enqueue('historical_backfill', {
     assetId: asset.id,
     from: new Date(chunk.from).toISOString(),

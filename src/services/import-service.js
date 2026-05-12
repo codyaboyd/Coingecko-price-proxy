@@ -592,25 +592,31 @@ function importNormalizedHistoryFile(inputPath, options = {}) {
       vsCurrency,
       interval
     }));
-    const result = insertCandles(importCandles, {
-      db,
-      assetId,
-      vsCurrency,
-      interval,
-      conflictPolicy: policy,
-      fetchedAt: createdAt
+    let result;
+    let runId;
+    const writeImport = db.transaction(() => {
+      result = insertCandles(importCandles, {
+        db,
+        assetId,
+        vsCurrency,
+        interval,
+        conflictPolicy: policy,
+        fetchedAt: createdAt
+      });
+
+      runId = recordImportRun(db, {
+        filename,
+        assetId,
+        vsCurrency,
+        detectedFormat,
+        status: 'success',
+        rowsSeen: result.received,
+        rowsImported: result.changed,
+        createdAt
+      });
     });
 
-    const runId = recordImportRun(db, {
-      filename,
-      assetId,
-      vsCurrency,
-      detectedFormat,
-      status: 'success',
-      rowsSeen: result.received,
-      rowsImported: result.changed,
-      createdAt
-    });
+    writeImport();
 
     return {
       runId,
