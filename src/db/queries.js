@@ -49,6 +49,19 @@ function upsertAssets(db, assets, timestamp = Date.now()) {
         updatedAt: timestamp
       });
     });
+
+    if (assetRows.length === 0) {
+      db.prepare('UPDATE assets SET enabled = 0, updated_at = ?').run(timestamp);
+      return;
+    }
+
+    const placeholders = assetRows.map(() => '?').join(', ');
+    db.prepare(`
+      UPDATE assets
+      SET enabled = 0,
+          updated_at = ?
+      WHERE id NOT IN (${placeholders})
+    `).run(timestamp, ...assetRows.map((asset) => asset.id));
   });
 
   writeAssets(assets);
@@ -112,14 +125,14 @@ function publicAssetSelectSql(whereClause = '') {
 
 function listPublicAssets(db) {
   return db
-    .prepare(`${publicAssetSelectSql()} ORDER BY assets.priority ASC, assets.symbol ASC`)
+    .prepare(`${publicAssetSelectSql('WHERE assets.enabled = 1')} ORDER BY assets.priority ASC, assets.symbol ASC`)
     .all()
     .map(toPublicAsset);
 }
 
 function getPublicAsset(db, assetId) {
   const row = db
-    .prepare(`${publicAssetSelectSql('WHERE assets.id = ?')} LIMIT 1`)
+    .prepare(`${publicAssetSelectSql('WHERE assets.id = ? AND assets.enabled = 1')} LIMIT 1`)
     .get(assetId);
 
   return row ? toPublicAsset(row) : null;
