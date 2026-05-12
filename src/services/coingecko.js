@@ -1,4 +1,5 @@
 const logger = require('../utils/logger');
+const { createProxyAwareFetch } = require('../utils/proxy-fetch');
 const { getGlobalLimiter, sleep } = require('../utils/limiter');
 
 const DEFAULT_API_BASE = 'https://api.coingecko.com/api/v3';
@@ -142,7 +143,7 @@ function createCoinGeckoClient(options = {}) {
   );
   const baseBackoffMs = parsePositiveInteger(options.baseBackoffMs || process.env.COINGECKO_BACKOFF_MS, DEFAULT_BACKOFF_MS);
   const limiter = options.limiter || getGlobalLimiter();
-  const fetchImpl = options.fetch || fetch;
+  const fetchImpl = options.fetch || createProxyAwareFetch(fetch);
   const authHeaders = buildAuthHeaders(apiKey, apiKeyType);
 
   async function requestJson(pathname, searchParams) {
@@ -162,6 +163,7 @@ function createCoinGeckoClient(options = {}) {
         const response = await limiter.schedule(() => fetchImpl(url, {
           headers: {
             accept: 'application/json',
+            'user-agent': 'chrono-cache/0.1 (+https://github.com/local/chrono-cache)',
             ...authHeaders
           },
           signal: controller.signal

@@ -7,7 +7,7 @@ const test = require('node:test');
 const { createApp } = require('../src/app');
 const { runMigrations, MIGRATIONS } = require('../src/db/migrations');
 const { openDatabase } = require('../src/db/node-sqlite');
-const { upsertAssets } = require('../src/db/queries');
+const { getPublicAsset, listPublicAssets, upsertAssets } = require('../src/db/queries');
 const { getGapReport } = require('../src/services/cache-policy');
 const { insertCandles } = require('../src/services/history-service');
 const { convertDumpFile } = require('../src/services/import-service');
@@ -128,6 +128,33 @@ test('fake candles insert and history API returns candles while invalid asset re
 
   assert.equal(missingResponse.status, 404);
   assert.equal(missingBody.error.code, 'asset_not_found');
+});
+
+
+test('asset sync hides disabled and removed assets from public API lookups', (t) => {
+  const db = createTempDatabase(t);
+  runMigrations(db);
+
+  upsertAssets(db, [
+    TEST_ASSETS[0],
+    {
+      id: 'paused',
+      symbol: 'PAUSE',
+      name: 'Paused Asset',
+      coingeckoId: 'bitcoin',
+      vsCurrency: 'usd',
+      enabled: false,
+      priority: 20
+    }
+  ], Date.UTC(2026, 0, 1));
+
+  assert.deepEqual(listPublicAssets(db).map((asset) => asset.id), ['btc']);
+  assert.equal(getPublicAsset(db, 'paused'), null);
+
+  upsertAssets(db, [], Date.UTC(2026, 0, 2));
+
+  assert.deepEqual(listPublicAssets(db), []);
+  assert.equal(getPublicAsset(db, 'btc'), null);
 });
 
 test('import converter handles a sample CSV fixture', () => {

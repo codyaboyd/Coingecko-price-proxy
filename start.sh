@@ -6,7 +6,7 @@ cd "$SCRIPT_DIR"
 
 SESSION_NAME="chrono-cache"
 LOG_FILE="logs/server.log"
-REQUIRED_DIRS=(logs data imports exports backups)
+REQUIRED_DIRS=(logs data data/imports data/exports data/backups)
 
 session_exists() {
   screen -list | awk '{print $1}' | grep -qx "[0-9]*\.${SESSION_NAME}"
