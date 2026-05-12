@@ -63,6 +63,13 @@ logs/
    npm run validate-assets
    ```
 
+6. Run the smoke test suite:
+
+   ```bash
+   npm test
+   npm run smoke
+   ```
+
 ## Running the app
 
 Start the server directly:
@@ -130,6 +137,19 @@ Public routes remain available without admin authentication:
 
 Use `/admin/login` to sign in and `/admin/logout` to clear the session. The app also sends security headers with Helmet and logs each request with method, path, status code, duration, and remote address.
 
+## Testing
+
+The project uses plain JavaScript and Node's built-in test runner. The practical smoke suite is in `tests/smoke.test.js` and uses temporary SQLite databases so it does not modify `data/history.sqlite`. Sample import data lives under `test-fixtures/`.
+
+Run all smoke checks with either command:
+
+```bash
+npm test
+npm run smoke
+```
+
+The suite checks that configuration loads, migrations apply, assets validate, fake candle inserts work, the history API returns candles, unknown assets return `404`, the import converter handles the sample CSV fixture, and the gap detector reports missing candles.
+
 ## Scripts
 
 - `./start.sh` - prepare runtime directories, install dependencies when needed, run migrations, validate assets, and start the app in the `chrono-cache` screen session with logs written to `logs/server.log`.
@@ -139,6 +159,8 @@ Use `/admin/login` to sign in and `/admin/logout` to clear the session. The app 
 - `npm run dev` - run the server with `nodemon`.
 - `npm run migrate` - run `node scripts/cli.js migrate` to apply pending SQLite migrations.
 - `npm run validate-assets` - run `node scripts/cli.js validate-assets` to validate `config/assets.json`.
+- `npm test` - run Node's built-in test runner against the practical smoke suite in `tests/smoke.test.js`.
+- `npm run smoke` - alias for the same practical smoke checks used by `npm test`.
 - `npm run backup-db` - run `node scripts/cli.js backup-db` to create a SQLite backup under `data/backups`.
 - `npm run export-history -- --asset btc --format csv` - export stored candle history.
 - `npm run repair-gaps -- --asset btc --from 2025-01-01 --to 2025-01-31 --interval 1d` - enqueue and run gap repair fetch jobs in the CLI process.

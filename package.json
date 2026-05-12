@@ -20,7 +20,9 @@
     "backup-db": "node scripts/cli.js backup-db",
     "export-history": "node scripts/cli.js export-history",
     "repair-gaps": "node scripts/cli.js repair-gaps",
-    "queue-status": "node scripts/cli.js queue-status"
+    "queue-status": "node scripts/cli.js queue-status",
+    "test": "node --test tests/smoke.test.js",
+    "smoke": "node --test tests/smoke.test.js"
   },
   "keywords": [
     "cache",
