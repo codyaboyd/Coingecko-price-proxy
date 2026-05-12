@@ -5,6 +5,7 @@ const { getHistory, SUPPORTED_INTERVALS } = require('../services/history-service
 const { getGapReport } = require('../services/cache-policy');
 const { enqueueBackfill } = require('../jobs/backfill-job');
 const { createScheduler } = require('../jobs/scheduler');
+const { assertTimestampRange, DAY_MS, parseDateInput } = require('../utils/date');
 const {
   buildHistoryCacheKey,
   getCachedResponse,
@@ -21,6 +22,11 @@ const DEFAULT_FORMAT = 'json';
 const DEFAULT_FILL = 'none';
 const DEFAULT_HISTORY_LIMIT = 1000;
 const MAX_HISTORY_LIMIT = 5000;
+const MAX_RANGE_MS_BY_INTERVAL = {
+  '5m': 31 * DAY_MS,
+  '1h': 2 * 366 * DAY_MS,
+  '1d': 20 * 366 * DAY_MS
+};
 const INTERVAL_DURATIONS = {
   '5m': 5 * 60 * 1000,
   '1h': 60 * 60 * 1000,
@@ -81,103 +87,22 @@ function normalizeChoice(value, defaultValue, allowedValues, field) {
 }
 
 function parseTimestamp(value, field) {
-  if (value === undefined || value === null || String(value).trim() === '') {
-    return null;
+  try {
+    return parseDateInput(value, field);
+  } catch (error) {
+    throw createApiError(400, error.code || `invalid_${field}`, error.message);
   }
-
-  const text = String(value).trim();
-
-  if (/^-?\d+$/.test(text)) {
-    const timestamp = Number(text);
-
-    if (Number.isSafeInteger(timestamp)) {
-      return timestamp;
-    }
-
-    throw createApiError(400, `invalid_${field}`, `${field} must be a safe millisecond timestamp.`);
-  }
-
-  const dateOnlyMatch = text.match(/^(\d{4})-(\d{2})-(\d{2})$/);
-
-  if (dateOnlyMatch) {
-    const year = Number(dateOnlyMatch[1]);
-    const monthIndex = Number(dateOnlyMatch[2]) - 1;
-    const day = Number(dateOnlyMatch[3]);
-    const timestamp = field === 'to'
-      ? Date.UTC(year, monthIndex, day, 23, 59, 59, 999)
-      : Date.UTC(year, monthIndex, day, 0, 0, 0, 0);
-    const parsedDate = new Date(timestamp);
-
-    if (
-      parsedDate.getUTCFullYear() === year &&
-      parsedDate.getUTCMonth() === monthIndex &&
-      parsedDate.getUTCDate() === day
-    ) {
-      return timestamp;
-    }
-  }
-
-  const parsed = Date.parse(text);
-
-  if (Number.isFinite(parsed)) {
-    return parsed;
-  }
-
-  throw createApiError(
-    400,
-    `invalid_${field}`,
-    `${field} must be a YYYY-MM-DD date, millisecond timestamp, or ISO date string.`
-  );
 }
 
 
 function parseGapTimestamp(value, field) {
-  if (value === undefined || value === null || String(value).trim() === '') {
-    return null;
+  try {
+    return parseDateInput(value, field, { endOfDay: false });
+  } catch (error) {
+    throw createApiError(400, error.code || `invalid_${field}`, error.message);
   }
-
-  const text = String(value).trim();
-
-  if (/^-?\d+$/.test(text)) {
-    const timestamp = Number(text);
-
-    if (Number.isSafeInteger(timestamp)) {
-      return timestamp;
-    }
-
-    throw createApiError(400, `invalid_${field}`, `${field} must be a safe millisecond timestamp.`);
-  }
-
-  const dateOnlyMatch = text.match(/^(\d{4})-(\d{2})-(\d{2})$/);
-
-  if (dateOnlyMatch) {
-    const year = Number(dateOnlyMatch[1]);
-    const monthIndex = Number(dateOnlyMatch[2]) - 1;
-    const day = Number(dateOnlyMatch[3]);
-    const timestamp = Date.UTC(year, monthIndex, day, 0, 0, 0, 0);
-    const parsedDate = new Date(timestamp);
-
-    if (
-      parsedDate.getUTCFullYear() === year &&
-      parsedDate.getUTCMonth() === monthIndex &&
-      parsedDate.getUTCDate() === day
-    ) {
-      return timestamp;
-    }
-  }
-
-  const parsed = Date.parse(text);
-
-  if (Number.isFinite(parsed)) {
-    return parsed;
-  }
-
-  throw createApiError(
-    400,
-    `invalid_${field}`,
-    `${field} must be a YYYY-MM-DD date, millisecond timestamp, or ISO date string.`
-  );
 }
+
 
 function parseRequiredGapTimestamp(value, field) {
   const timestamp = parseGapTimestamp(value, field);
@@ -207,12 +132,17 @@ function parseLimit(value) {
   return limit;
 }
 
-function validateRange(fromTs, toTs) {
-  if (fromTs !== null && toTs !== null && fromTs > toTs) {
-    throw createApiError(400, 'invalid_range', 'from must be less than or equal to to.', {
+function validateRange(fromTs, toTs, interval) {
+  try {
+    assertTimestampRange(fromTs, toTs, {
+      maxSpanMs: interval ? MAX_RANGE_MS_BY_INTERVAL[interval] : null,
+      maxSpanMessage: interval ? `Date range is too large for interval ${interval}.` : null
+    });
+  } catch (error) {
+    throw createApiError(400, error.code || 'invalid_range', error.message, fromTs !== null && toTs !== null ? {
       from: new Date(fromTs).toISOString(),
       to: new Date(toTs).toISOString()
-    });
+    } : undefined);
   }
 }
 
@@ -333,11 +263,11 @@ function parseHistoryRequest(req) {
   const toTs = parseTimestamp(req.query.to, 'to');
   const limit = parseLimit(req.query.limit);
 
-  if (!vsCurrency) {
-    throw createApiError(400, 'invalid_vs', 'vs must be a non-empty currency code.');
+  if (!/^[a-z0-9_-]{2,20}$/.test(vsCurrency)) {
+    throw createApiError(400, 'invalid_vs', 'vs must be a 2-20 character currency code.');
   }
 
-  validateRange(fromTs, toTs);
+  validateRange(fromTs, toTs, interval);
 
   return {
     asset,
@@ -462,7 +392,7 @@ router.get('/admin/assets/:assetId/gaps', (req, res, next) => {
       throw createApiError(400, 'invalid_vsCurrency', 'vsCurrency must be a non-empty currency code.');
     }
 
-    validateRange(fromTs, toTs);
+    validateRange(fromTs, toTs, interval);
 
     const gapReport = getGapReport(asset.id, vsCurrency, interval, fromTs, toTs, { db });
 

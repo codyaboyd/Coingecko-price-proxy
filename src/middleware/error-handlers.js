@@ -27,7 +27,11 @@ function errorHandler(err, req, res, next) {
   const code = err.code || (safeStatus === 500 ? 'server_error' : 'request_error');
   const message = safeStatus === 500 ? 'Something went wrong.' : err.message;
 
-  logger.error(err.message, { stack: err.stack });
+  if (safeStatus >= 500) {
+    logger.error(`${req.method} ${req.originalUrl} failed: ${err.message}`, { stack: err.stack });
+  } else {
+    logger.warn(`${req.method} ${req.originalUrl} rejected with ${safeStatus}: ${err.message}`);
+  }
 
   if (isApiRequest(req)) {
     const payload = {

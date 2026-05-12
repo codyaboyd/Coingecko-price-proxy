@@ -2,10 +2,12 @@ const { fetchMarketChartRange } = require('./coingecko');
 const { normalizeMarketChartRange } = require('./history-normalizer');
 const { countCandles, insertCandles, SUPPORTED_INTERVALS, CONFLICT_POLICIES } = require('./history-service');
 const { createFetchRun, getPublicAsset, updateFetchRun } = require('../db/queries');
+const { assertTimestampRange, DAY_MS, parseDateInput } = require('../utils/date');
 
 const DEFAULT_INTERVAL = '1h';
 const DEFAULT_CONFLICT_POLICY = 'fill_only_missing';
 const DEFAULT_SOURCE = 'coingecko';
+const MAX_FETCH_RANGE_MS = 366 * DAY_MS;
 
 function createValidationError(code, message) {
   const error = new Error(message);
@@ -22,37 +24,13 @@ function createNotFoundError(assetId) {
 }
 
 function normalizeRequiredDate(value, field) {
-  if (typeof value !== 'string' || value.trim() === '') {
-    throw createValidationError(`invalid_${field}`, `${field} must be a YYYY-MM-DD date or ISO date string.`);
+  try {
+    return parseDateInput(value, field, { required: true });
+  } catch (error) {
+    throw createValidationError(error.code || `invalid_${field}`, error.message);
   }
-
-  const text = value.trim();
-  const dateOnlyMatch = text.match(/^(\d{4})-(\d{2})-(\d{2})$/);
-
-  if (dateOnlyMatch) {
-    const year = Number(dateOnlyMatch[1]);
-    const monthIndex = Number(dateOnlyMatch[2]) - 1;
-    const day = Number(dateOnlyMatch[3]);
-    const timestamp = Date.UTC(year, monthIndex, day, 0, 0, 0, 0);
-    const parsed = new Date(timestamp);
-
-    if (
-      parsed.getUTCFullYear() === year &&
-      parsed.getUTCMonth() === monthIndex &&
-      parsed.getUTCDate() === day
-    ) {
-      return timestamp;
-    }
-  }
-
-  const parsed = Date.parse(text);
-
-  if (Number.isFinite(parsed)) {
-    return parsed;
-  }
-
-  throw createValidationError(`invalid_${field}`, `${field} must be a YYYY-MM-DD date or ISO date string.`);
 }
+
 
 function normalizeChoice(value, defaultValue, allowedValues, field) {
   const normalized = String(value || defaultValue).trim().toLowerCase();
@@ -78,6 +56,15 @@ function normalizeFetchRequest(body = {}, asset) {
 
   if (!vsCurrency) {
     throw createValidationError('invalid_vsCurrency', 'vsCurrency must be a non-empty currency code.');
+  }
+
+  try {
+    assertTimestampRange(fromTs, toTs, {
+      maxSpanMs: MAX_FETCH_RANGE_MS,
+      maxSpanMessage: 'Manual CoinGecko fetch range must be 366 days or less.'
+    });
+  } catch (error) {
+    throw createValidationError(error.code || 'invalid_range', error.message);
   }
 
   if (toTs <= fromTs) {

@@ -12,8 +12,12 @@ const { buildRecentRefreshJobs, createRecentRefreshScheduler, normalizeFetchPoli
 const { clearApiCache, getApiCacheStats } = require('../services/api-cache');
 const { fetchMarketChartRange } = require('../services/coingecko');
 const { getGapReport } = require('../services/cache-policy');
+const { assertTimestampRange, DAY_MS, parseDateInput } = require('../utils/date');
+const logger = require('../utils/logger');
 
 const router = express.Router();
+const MAX_IMPORT_FILE_BYTES = 50 * 1024 * 1024;
+const MAX_ADMIN_FETCH_RANGE_MS = 366 * DAY_MS;
 
 
 function getHotReloadManager(req) {
@@ -105,21 +109,57 @@ function listPendingImportFiles(req) {
   return files.sort((left, right) => right.updatedAt - left.updatedAt);
 }
 
+function assertInsideDirectory(baseDir, candidatePath, message) {
+  const baseRealPath = fs.realpathSync(baseDir);
+  const candidateRealPath = fs.realpathSync(candidatePath);
+
+  if (candidateRealPath !== baseRealPath && !candidateRealPath.startsWith(`${baseRealPath}${path.sep}`)) {
+    const error = new Error(message);
+    error.status = 400;
+    throw error;
+  }
+
+  return candidateRealPath;
+}
+
 function resolveImportFile(req, fileName) {
   if (!fileName) {
     return null;
   }
 
   const importsDir = getImportsDirectory(req);
+  ensureDirectory(importsDir);
+
+  if (path.isAbsolute(fileName) || String(fileName).includes('..')) {
+    const error = new Error('Import file must be a relative path inside data/imports.');
+    error.status = 400;
+    throw error;
+  }
+
   const resolved = path.resolve(importsDir, fileName);
 
-  if (resolved !== importsDir && !resolved.startsWith(`${importsDir}${path.sep}`)) {
+  if (resolved === importsDir || !resolved.startsWith(`${importsDir}${path.sep}`)) {
     const error = new Error('Import file must be inside data/imports.');
     error.status = 400;
     throw error;
   }
 
-  return resolved;
+  const safePath = assertInsideDirectory(importsDir, resolved, 'Import file cannot be a symlink or path outside data/imports.');
+  const stats = fs.statSync(safePath);
+
+  if (!stats.isFile()) {
+    const error = new Error('Import path must be a regular file.');
+    error.status = 400;
+    throw error;
+  }
+
+  if (stats.size > MAX_IMPORT_FILE_BYTES) {
+    const error = new Error('Import file is too large for admin preview/import.');
+    error.status = 400;
+    throw error;
+  }
+
+  return safePath;
 }
 
 function looksLikeNormalizedFile(filePath) {
@@ -130,9 +170,10 @@ function buildConvertedPath(req, sourcePath, assetId) {
   const config = req.app.get('config');
   const convertedDir = path.join(config.dataDir, 'imports', 'converted');
   ensureDirectory(convertedDir);
-  const parsed = path.parse(sourcePath);
+  const parsed = path.parse(path.basename(sourcePath));
   const safeAsset = String(assetId || 'asset').replace(/[^a-z0-9_-]/gi, '-').toLowerCase();
-  return resolveFromRoot(path.join(convertedDir, `${safeAsset}-${parsed.name}.normalized.json`));
+  const safeName = parsed.name.replace(/[^a-z0-9_.-]/gi, '-').slice(0, 120) || 'import';
+  return resolveFromRoot(path.join(convertedDir, `${safeAsset}-${safeName}.normalized.json`));
 }
 
 function previewImportFile(filePath, options) {
@@ -177,6 +218,7 @@ function renderImportsPage(req, res, extras = {}) {
       });
     } catch (error) {
       previewError = error.message;
+      logger.warn(`Import preview failed for ${selectedFile}: ${error.message}`);
     }
   }
 
@@ -399,13 +441,26 @@ function getAdminRangeQuery(req, asset) {
 }
 
 function parseDateForAdminAction(value, field) {
-  const timestamp = Date.parse(String(value || ''));
-
-  if (!Number.isFinite(timestamp)) {
-    throw new Error(`${field} must be a valid date or ISO timestamp.`);
+  try {
+    return parseDateInput(value, field, { required: true });
+  } catch (error) {
+    throw new Error(error.message);
   }
+}
 
-  return timestamp;
+function validateAdminFetchRange(fromTs, toTs) {
+  try {
+    assertTimestampRange(fromTs, toTs, {
+      maxSpanMs: MAX_ADMIN_FETCH_RANGE_MS,
+      maxSpanMessage: 'Admin CoinGecko test range must be 366 days or less.'
+    });
+
+    if (toTs <= fromTs) {
+      throw new Error('to must be greater than from.');
+    }
+  } catch (error) {
+    throw new Error(error.message);
+  }
 }
 
 router.get('/imports', (req, res, next) => {
@@ -420,8 +475,8 @@ router.post('/imports/run', (req, res, next) => {
   try {
     const fileName = req.body.file;
     const assetId = req.body.assetId;
-    const interval = req.body.interval || '1d';
-    const policy = req.body.policy || DEFAULT_CONFLICT_POLICY;
+    const interval = Array.from(SUPPORTED_INTERVALS).includes(req.body.interval) ? req.body.interval : '1d';
+    const policy = Array.from(CONFLICT_POLICIES).includes(req.body.policy) ? req.body.policy : DEFAULT_CONFLICT_POLICY;
     const assets = getConfiguredAssets(req);
     const asset = assets.find((candidate) => candidate.id === assetId);
 
@@ -619,6 +674,7 @@ router.post('/assets/:id/test/coingecko', async (req, res, next) => {
     const range = getAdminRangeQuery(req, asset);
     const fromTs = parseDateForAdminAction(range.from, 'from');
     const toTs = parseDateForAdminAction(range.to, 'to');
+    validateAdminFetchRange(fromTs, toTs);
     const response = await fetchMarketChartRange(asset.coingeckoId, range.vsCurrency, fromTs, toTs);
 
     res.json({
@@ -678,6 +734,7 @@ router.get('/assets/:id/test/gap-report', (req, res, next) => {
     const range = getAdminRangeQuery(req, asset);
     const fromTs = parseDateForAdminAction(range.from, 'from');
     const toTs = parseDateForAdminAction(range.to, 'to');
+    validateAdminFetchRange(fromTs, toTs);
     const report = getGapReport(asset.id, range.vsCurrency, range.interval, fromTs, toTs, { db: getDatabase(req) });
 
     res.json({ ok: true, asset: { id: asset.id, symbol: asset.symbol }, range, gapReport: report });
