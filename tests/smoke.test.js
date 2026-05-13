@@ -10,6 +10,7 @@ const { openDatabase } = require('../src/db/node-sqlite');
 const { getPublicAsset, listPublicAssets, upsertAssets } = require('../src/db/queries');
 const { getGapReport } = require('../src/services/cache-policy');
 const { getAssetStaleness, STALENESS_RULES } = require('../src/services/staleness-service');
+const { markStuckFetchRunsFailed, runDatabaseIntegrityCheck } = require('../src/services/db-integrity-service');
 const { insertCandles } = require('../src/services/history-service');
 const { convertDumpFile } = require('../src/services/import-service');
 const { validateAssetsFile } = require('../src/services/asset-service');
@@ -446,3 +447,45 @@ test('durable scheduler recovers stale running jobs on startup', (t) => {
   assert.equal(exhaustedJob.lockedAt, null);
 });
 
+
+
+test('database integrity service reports clean migrated data and can mark stuck fetch runs failed', (t) => {
+  const db = seedDatabase(t);
+  const now = Date.UTC(2026, 0, 2, 12, 0, 0);
+
+  insertCandles([
+    { ts: now - DAY_MS, open: 42000, high: 43000, low: 41000, close: 42500 }
+  ], {
+    db,
+    assetId: 'btc',
+    vsCurrency: 'usd',
+    interval: '1d',
+    fetchedAt: now
+  });
+
+  const cleanReport = runDatabaseIntegrityCheck(db, { now });
+  const primaryKeyCheck = cleanReport.checks.find((check) => check.id === 'duplicate_candles_impossible');
+
+  assert.equal(primaryKeyCheck.status, 'ok');
+  assert.equal(cleanReport.summary.critical, 0);
+
+  const stuckRunId = db.prepare(`
+    INSERT INTO fetch_runs (asset_id, vs_currency, interval, started_at, status, source)
+    VALUES ('btc', 'usd', '1d', @startedAt, 'running', 'test')
+  `).run({ startedAt: now - (2 * 60 * 60 * 1000) }).lastInsertRowid;
+
+  const stuckReport = runDatabaseIntegrityCheck(db, { now });
+  const stuckCheck = stuckReport.checks.find((check) => check.id === 'fetch_runs_stuck_running');
+
+  assert.equal(stuckCheck.status, 'warning');
+  assert.equal(stuckCheck.details.length, 1);
+  assert.equal(stuckCheck.details[0].id, stuckRunId);
+
+  const repairResult = markStuckFetchRunsFailed(db, { now });
+  const repairedRun = db.prepare('SELECT status, finished_at, error FROM fetch_runs WHERE id = ?').get(stuckRunId);
+
+  assert.equal(repairResult.changed, 1);
+  assert.equal(repairedRun.status, 'failed');
+  assert.equal(repairedRun.finished_at, now);
+  assert.equal(repairedRun.error, 'Marked failed by database integrity check');
+});

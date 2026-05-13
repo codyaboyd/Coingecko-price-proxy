@@ -1,0 +1,165 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title><%= title %></title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="/public/css/app.css" rel="stylesheet">
+  </head>
+  <body>
+    <nav class="navbar navbar-expand-lg bg-dark navbar-dark">
+      <div class="container">
+        <a class="navbar-brand" href="/admin"><%= appName %></a>
+        <div class="navbar-nav ms-auto">
+          <a class="nav-link" href="/admin/assets">Assets</a>
+          <a class="nav-link" href="/admin/imports">Imports</a>
+          <a class="nav-link" href="/admin/backups">Backups</a>
+          <a class="nav-link" href="/admin/reload-status">Reload Status</a>
+          <a class="nav-link" href="/admin/system-health">System Health</a>
+          <a class="nav-link active" aria-current="page" href="/admin/db-integrity">DB Integrity</a>
+          <a class="nav-link" href="/admin/rate-budget">Rate Budget</a>
+          <a class="nav-link" href="/admin/api-test">API Test</a>
+          <a class="nav-link" href="/admin/logout">Logout</a>
+        </div>
+      </div>
+    </nav>
+
+    <%- include('admin-maintenance-banner') %>
+
+    <main class="container py-5">
+      <div class="d-flex align-items-start justify-content-between flex-wrap gap-3 mb-4">
+        <div>
+          <h1 class="display-6 fw-bold mb-2">Database integrity</h1>
+          <p class="text-secondary mb-0">Runs read-only checks by default. No rows are deleted automatically.</p>
+        </div>
+        <form method="post" action="/admin/db-integrity/run" class="m-0">
+          <button type="submit" class="btn btn-primary">Run integrity check now</button>
+        </form>
+      </div>
+
+      <% if (dbIntegrityAction) { %>
+        <div class="alert alert-info alert-dismissible fade show" role="alert">
+          Database integrity action: <strong><%= dbIntegrityAction %></strong><% if (dbIntegrityDetails) { %> — <%= dbIntegrityDetails %><% } %>
+          <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+        </div>
+      <% } %>
+
+      <% if (!report) { %>
+        <div class="card shadow-sm">
+          <div class="card-body">
+            <h2 class="h5">No integrity report loaded</h2>
+            <p class="text-secondary mb-0">Use the button above to run the checks and display repair guidance.</p>
+          </div>
+        </div>
+      <% } else { %>
+        <div class="row g-3 mb-4">
+          <div class="col-sm-4">
+            <div class="p-3 rounded bg-success-subtle text-center h-100">
+              <div class="display-6 mb-0"><%= report.summary.ok %></div>
+              <div class="small text-uppercase fw-semibold">OK</div>
+            </div>
+          </div>
+          <div class="col-sm-4">
+            <div class="p-3 rounded bg-warning-subtle text-center h-100">
+              <div class="display-6 mb-0"><%= report.summary.warning %></div>
+              <div class="small text-uppercase fw-semibold">Warning</div>
+            </div>
+          </div>
+          <div class="col-sm-4">
+            <div class="p-3 rounded bg-danger-subtle text-center h-100">
+              <div class="display-6 mb-0"><%= report.summary.critical %></div>
+              <div class="small text-uppercase fw-semibold">Critical</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="card shadow-sm mb-4">
+          <div class="card-body d-flex align-items-center justify-content-between flex-wrap gap-3">
+            <div>
+              <h2 class="h5 mb-1">Report summary</h2>
+              <p class="text-secondary mb-0">Checked at <code><%= report.checkedAtIso %></code>. Current migration version expected: <code><%= report.currentMigrationVersion %></code>.</p>
+            </div>
+            <% if (report.ok) { %>
+              <span class="badge text-bg-success fs-6">No critical issues</span>
+            <% } else { %>
+              <span class="badge text-bg-danger fs-6">Critical issues found</span>
+            <% } %>
+          </div>
+        </div>
+
+        <% const stuckFetchCheck = report.checks.find((check) => check.id === 'fetch_runs_stuck_running'); %>
+        <% if (stuckFetchCheck && stuckFetchCheck.detailCount > 0) { %>
+          <div class="card shadow-sm border-warning mb-4">
+            <div class="card-body d-flex align-items-center justify-content-between flex-wrap gap-3">
+              <div>
+                <h2 class="h5 mb-1">Safe repair available</h2>
+                <p class="text-secondary mb-0">Stuck fetch runs can be safely marked failed so future jobs are not blocked. This does not delete candle data.</p>
+              </div>
+              <form method="post" action="/admin/db-integrity/mark-stuck-failed" class="m-0">
+                <button type="submit" class="btn btn-warning">Safe auto-mark-failed</button>
+              </form>
+            </div>
+          </div>
+        <% } %>
+
+        <div class="accordion" id="integrityChecks">
+          <% report.checks.forEach((check, index) => { %>
+            <% const badgeClass = check.status === 'ok' ? 'text-bg-success' : (check.status === 'warning' ? 'text-bg-warning' : 'text-bg-danger'); %>
+            <div class="accordion-item">
+              <h2 class="accordion-header" id="heading-<%= check.id %>">
+                <button class="accordion-button <%= check.status === 'ok' ? 'collapsed' : '' %>" type="button" data-bs-toggle="collapse" data-bs-target="#collapse-<%= check.id %>" aria-expanded="<%= check.status === 'ok' ? 'false' : 'true' %>" aria-controls="collapse-<%= check.id %>">
+                  <span class="badge <%= badgeClass %> me-3"><%= check.status %></span>
+                  <span><%= check.label %> — <%= check.summary %></span>
+                </button>
+              </h2>
+              <div id="collapse-<%= check.id %>" class="accordion-collapse collapse <%= check.status === 'ok' ? '' : 'show' %>" aria-labelledby="heading-<%= check.id %>" data-bs-parent="#integrityChecks">
+                <div class="accordion-body">
+                  <% if (check.detailCount > 0) { %>
+                    <h3 class="h6">Details (showing up to sampled rows)</h3>
+                    <div class="table-responsive mb-3">
+                      <table class="table table-sm table-striped align-middle">
+                        <thead>
+                          <tr>
+                            <% Object.keys(check.details[0]).forEach((key) => { %>
+                              <th scope="col"><%= key %></th>
+                            <% }) %>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          <% check.details.forEach((row) => { %>
+                            <tr>
+                              <% Object.keys(check.details[0]).forEach((key) => { %>
+                                <td class="text-break"><%= row[key] === null || row[key] === undefined ? '—' : row[key] %></td>
+                              <% }) %>
+                            </tr>
+                          <% }) %>
+                        </tbody>
+                      </table>
+                    </div>
+                  <% } else { %>
+                    <p class="text-secondary">No detail rows for this check.</p>
+                  <% } %>
+
+                  <% if (check.repairCommands.length > 0) { %>
+                    <h3 class="h6">Suggested repair guidance</h3>
+                    <p class="small text-secondary">Review and back up first. These commands are suggestions; no destructive cleanup is run automatically.</p>
+                    <ul class="mb-0">
+                      <% check.repairCommands.forEach((command) => { %>
+                        <li><code><%= command %></code></li>
+                      <% }) %>
+                    </ul>
+                  <% } else { %>
+                    <p class="text-success mb-0">No repair action suggested.</p>
+                  <% } %>
+                </div>
+              </div>
+            </div>
+          <% }) %>
+        </div>
+      <% } %>
+    </main>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+  </body>
+</html>
