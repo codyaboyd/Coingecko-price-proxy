@@ -170,6 +170,8 @@ The suite checks that configuration loads, migrations apply, assets validate, fa
 - `./start.sh` - prepare runtime directories, install dependencies when needed, run migrations, validate assets, and start the app in the `chrono-cache` screen session with logs written to `logs/server.log`.
 - `./stop.sh` - safely stop the `chrono-cache` screen session.
 - `./restart.sh` - stop and then start the managed `chrono-cache` screen session.
+- `./update.sh` - create emergency backups, install dependencies, run self-check, migrations, tests, restart the managed app, and print the health check URL.
+- `./rollback.sh` - restore the latest emergency update backup, restore previous config and `.env` backups when available, run migrations, and start the app.
 - `npm start` - run the Express server directly.
 - `npm run dev` - run the server with `nodemon`.
 - `npm run migrate` - run `node scripts/cli.js migrate` to apply pending SQLite migrations.
@@ -238,25 +240,50 @@ The admin dashboard also has a **Create portable bundle** button in the Migratio
 
 ## Safe update process
 
-Use this process when refreshing the app or changing dependencies. The runtime compatibility check is diagnostic only; it does not auto-upgrade packages or rewrite dependency versions.
+Use the included safe update workflow when refreshing a solo-developer deployment. It keeps the app running while checks are performed, creates an emergency backup first, and only restarts the managed `screen` session after every update step passes.
 
-1. Create or verify a recent backup before changing the runtime or package tree:
+```bash
+./update.sh
+```
+
+`update.sh` performs these steps in order:
+
+1. Creates an emergency update backup under `data/update-backups/emergency-YYYY-MM-DD-HH-MM-SS/`.
+2. Runs `npm run backup-db` so the normal SQLite backup list also has a fresh backup.
+3. Copies the current database to the emergency backup directory when it exists.
+4. Copies the current `config/` directory and `.env` file, when available, to the emergency backup directory.
+5. Runs `npm install`.
+6. Runs `npm run self-check`.
+7. Runs `npm run migrate`.
+8. Runs `npm run test`.
+9. Restarts the app with `./restart.sh`.
+10. Prints the final health check URL, usually `http://127.0.0.1:3000/health`.
+
+If any backup, install, self-check, migration, or test step fails, the script stops immediately and does **not** restart the app. If the final restart step fails, the script stops and prints rollback instructions so you can restore the emergency backup and start the app again.
+
+### How to update safely
+
+1. Commit or otherwise save your code changes before updating.
+2. Run the safe workflow:
 
    ```bash
-   npm run backup-db
+   ./update.sh
    ```
 
-2. Inspect the current maintenance baseline:
+3. Open the health URL printed at the end of the script.
+4. If the health check is not healthy, use the rollback workflow below.
 
-   ```bash
-   npm run check-runtime
-   npm run self-check
-   npm test
-   ```
+### How to rollback
 
-3. Review dependency changes before installing them. Prefer `npm ci` on deployed systems when `package-lock.json` is present so installs match the lockfile exactly. Use `npm install` only when intentionally updating the lockfile.
-4. Do not auto-upgrade dependencies in production. Make version bumps in a controlled change, review `package.json` and `package-lock.json`, then run the compatibility check and smoke tests again.
-5. Restart the managed process and verify the admin **System Health** page, including the **Runtime Compatibility** section.
+Use the rollback script to restore the latest emergency backup created by `update.sh`:
+
+```bash
+./rollback.sh
+```
+
+`rollback.sh` finds the newest `data/update-backups/emergency-*` directory, stops the managed app session, restores `history.sqlite` to the configured database path, removes stale SQLite WAL/SHM files, restores the previous `config/` backup if one exists, restores the previous `.env` backup if one exists, runs migrations, and starts the app again.
+
+If the rollback script cannot continue, it prints manual rollback instructions. The manual process is to stop the app with `./stop.sh`, copy `history.sqlite` from the newest emergency backup to the configured database path, copy files from that backup's `config/` directory back into `./config/` if needed, and start the app with `./start.sh`.
 
 ## Maintenance CLI
 
