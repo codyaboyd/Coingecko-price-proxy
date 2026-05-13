@@ -16,6 +16,7 @@ const { convertDumpFile } = require('../src/services/import-service');
 const { validateAssetsFile } = require('../src/services/asset-service');
 const { loadServerConfig } = require('../src/utils/config');
 const { createScheduler } = require('../src/jobs/scheduler');
+const { buildAdminDoctorReport } = require('../src/services/admin-doctor-service');
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const FIXTURE_CSV = path.join(process.cwd(), 'test-fixtures', 'sample-history.csv');
@@ -489,4 +490,62 @@ test('database integrity service reports clean migrated data and can mark stuck 
   assert.equal(repairedRun.status, 'failed');
   assert.equal(repairedRun.finished_at, now);
   assert.equal(repairedRun.error, 'Marked failed by database integrity check');
+});
+
+
+test('admin doctor report includes maintenance checks and safe fixes', (t) => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'chrono-cache-doctor-'));
+  const databasePath = path.join(tempDir, 'history.sqlite');
+  const assetsConfigPath = path.join(tempDir, 'assets.json');
+  const dataDir = path.join(tempDir, 'data');
+  const db = openDatabase(databasePath);
+
+  t.after(() => {
+    db.close();
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  });
+
+  fs.mkdirSync(path.join(dataDir, 'imports'), { recursive: true });
+  fs.writeFileSync(assetsConfigPath, `${JSON.stringify({ assets: TEST_ASSETS }, null, 2)}\n`);
+  fs.writeFileSync(path.join(dataDir, 'imports', 'pending.csv'), 'time,open,high,low,close\n');
+  runMigrations(db);
+  upsertAssets(db, TEST_ASSETS, Date.UTC(2026, 0, 1));
+
+  const now = Date.UTC(2026, 0, 5);
+  db.prepare(`
+    INSERT INTO jobs (type, payload_json, priority, status, attempts, max_attempts, run_after, locked_at, locked_by, created_at, updated_at, last_error)
+    VALUES ('recent_refresh', '{"assetId":"btc"}', 3, 'failed', 3, 3, @now, NULL, NULL, @now, @now, 'boom')
+  `).run({ now });
+
+  const app = createApp({
+    appName: 'chrono-cache-test',
+    adminTitle: 'chrono-cache-test',
+    databasePath,
+    assetsConfigPath,
+    dataDir
+  });
+  app.set('db', db);
+  app.set('assets', TEST_ASSETS);
+
+  const scheduler = createScheduler({ db, config: app.get('config') });
+  const report = buildAdminDoctorReport({
+    app,
+    db,
+    config: app.get('config'),
+    assets: TEST_ASSETS,
+    scheduler,
+    recentRefreshScheduler: { getStatus: () => ({ enabled: true, paused: true }) },
+    backupService: { listBackups: () => [] },
+    now
+  });
+  const issueById = Object.fromEntries(report.issues.map((issue) => [issue.id, issue]));
+
+  assert.ok(report.issues.length >= 9);
+  assert.equal(issueById.self_check_ok.severity, 'ok');
+  assert.equal(issueById.failed_job_detection.severity, 'warning');
+  assert.equal(issueById.backup_freshness.severity, 'critical');
+  assert.equal(issueById.import_folder_scan.severity, 'info');
+  assert.ok(issueById.failed_job_detection.safeFixes.some((fix) => fix.action === 'retry-failed-jobs'));
+  assert.ok(issueById.backup_freshness.safeFixes.some((fix) => fix.action === 'create-backup'));
+  assert.ok(report.cleanupFixes.some((fix) => fix.action === 'clear-completed-jobs'));
 });

@@ -16,6 +16,7 @@ const { fetchMarketChartRange } = require('../services/coingecko');
 const { getGapReport } = require('../services/cache-policy');
 const { getGlobalRateBudgetService } = require('../services/rate-budget-service');
 const { buildSystemHealth, bytesToSummary } = require('../services/system-health');
+const { buildAdminDoctorReport } = require('../services/admin-doctor-service');
 const { markStuckFetchRunsFailed, runDatabaseIntegrityCheck } = require('../services/db-integrity-service');
 const { getAssetStaleness } = require('../services/staleness-service');
 const { applyMaintenanceModeToRuntime, createMaintenanceError, isMaintenanceMode } = require('../services/maintenance-service');
@@ -378,6 +379,16 @@ function formatIntegrityReport(report) {
   };
 }
 
+function redirectWithDoctorAction(res, action, details) {
+  const params = new URLSearchParams({ doctorAction: action });
+
+  if (details) {
+    params.set('doctorDetails', details);
+  }
+
+  res.redirect(`/admin/doctor?${params.toString()}`);
+}
+
 function redirectWithSchedulerAction(res, action, details) {
   const params = new URLSearchParams({ schedulerAction: action });
 
@@ -542,6 +553,32 @@ function hotReloadConfigFile(req, filePath, payload) {
   }
 }
 
+
+function reloadRuntimeConfig(req) {
+  const hotReloadManager = getHotReloadManager(req);
+  let serverStatus = null;
+  let assetsStatus = null;
+
+  if (hotReloadManager && typeof hotReloadManager.reloadServerConfig === 'function') {
+    serverStatus = hotReloadManager.reloadServerConfig();
+  }
+
+  if (hotReloadManager && typeof hotReloadManager.reloadAssetsConfig === 'function') {
+    assetsStatus = hotReloadManager.reloadAssetsConfig();
+  } else {
+    const payload = readAssetConfig(getAssetConfigPath(req));
+    reloadAssetsAfterWrite(req, payload);
+  }
+
+  return { serverStatus, assetsStatus };
+}
+
+function clearCompletedJobsOlderThan(db, days = 7) {
+  const cutoff = Date.now() - (days * 24 * 60 * 60 * 1000);
+  const result = db.prepare("DELETE FROM jobs WHERE status = 'completed' AND updated_at < @cutoff").run({ cutoff });
+  return result.changes;
+}
+
 function redirectWithConfigAction(res, action, details, selectedId) {
   const params = new URLSearchParams({ configAction: action });
 
@@ -617,6 +654,75 @@ function validateAdminFetchRange(fromTs, toTs) {
     throw new Error(error.message);
   }
 }
+
+
+router.get('/doctor', (req, res, next) => {
+  try {
+    const config = req.app.get('config');
+    const scheduler = getScheduler(req);
+    const report = buildAdminDoctorReport({
+      app: req.app,
+      db: getDatabase(req),
+      config,
+      assets: getConfiguredAssets(req),
+      scheduler,
+      recentRefreshScheduler: getRecentRefreshScheduler(req),
+      backupService: getBackupService(req)
+    });
+
+    res.render('admin-doctor', {
+      title: `${config.adminTitle} - Admin Doctor`,
+      appName: config.appName,
+      report,
+      doctorAction: req.query.doctorAction || null,
+      doctorDetails: req.query.doctorDetails || null
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.post('/doctor/fix', async (req, res, next) => {
+  try {
+    const action = String(req.body.action || '').trim();
+    let details = null;
+
+    if (action === 'create-backup') {
+      const backup = await getBackupService(req).createBackup();
+      details = `Created backup ${backup.fileName}`;
+    } else if (action === 'retry-failed-jobs') {
+      const count = getScheduler(req).retryFailedJobs();
+      details = `Queued ${count} failed job(s) for retry`;
+    } else if (action === 'clear-completed-jobs') {
+      const count = clearCompletedJobsOlderThan(getDatabase(req), 7);
+      details = `Cleared ${count} completed job(s) older than 7 days`;
+    } else if (action === 'reload-config') {
+      reloadRuntimeConfig(req);
+      details = 'Reloaded server and asset config where runtime-safe';
+    } else if (action === 'pause-scheduler') {
+      getRecentRefreshScheduler(req).pause();
+      details = 'Paused recent refresh scheduler';
+    } else if (action === 'resume-scheduler') {
+      getRecentRefreshScheduler(req).resume();
+      details = 'Resumed recent refresh scheduler';
+    } else if (action === 'mark-stuck-fetch-runs-failed') {
+      const result = markStuckFetchRunsFailed(getDatabase(req));
+      details = `Marked ${result.changed} stuck fetch run(s) failed`;
+    } else if (action === 'repair-stale-assets') {
+      requireMaintenanceDisabled(req, 'Maintenance mode is active; repair jobs are paused.');
+      const result = getRecentRefreshScheduler(req).runNow();
+      details = `Queued ${result.jobCount} stale asset repair job(s)`;
+    } else {
+      const error = new Error(`Unsupported doctor fix: ${action || 'none'}`);
+      error.status = 400;
+      throw error;
+    }
+
+    redirectWithDoctorAction(res, action, details);
+  } catch (error) {
+    next(error);
+  }
+});
 
 router.get('/imports', (req, res, next) => {
   try {
