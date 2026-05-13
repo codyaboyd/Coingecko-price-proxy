@@ -2,6 +2,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const { execFileSync } = require('node:child_process');
 const test = require('node:test');
 
 const { createApp } = require('../src/app');
@@ -23,6 +24,7 @@ const { clearLogFile, listLogFiles, readLatestLogLines, resolveLogFile, writeLog
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const FIXTURE_CSV = path.join(process.cwd(), 'test-fixtures', 'sample-history.csv');
+const SAMPLE_OHLCV_CSV = path.join(process.cwd(), 'test-fixtures', 'imports', 'sample-ohlcv.csv');
 const TEST_ASSETS = [
   {
     id: 'btc',
@@ -305,6 +307,123 @@ test('import converter handles a sample CSV fixture', () => {
   assert.equal(output.assetId, 'btc');
   assert.equal(output.candles[0].ts, Date.UTC(2026, 0, 1));
   assert.equal(output.candles[2].close, 44500);
+});
+
+
+test('built-in offline sample fixtures seed history, gaps, and admin health', async (t) => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'chrono-cache-sample-seed-'));
+  const databasePath = path.join(tempDir, 'history.sqlite');
+
+  t.after(() => fs.rmSync(tempDir, { recursive: true, force: true }));
+
+  const sampleCsv = convertDumpFile(SAMPLE_OHLCV_CSV, {
+    asset: 'btc',
+    symbol: 'BTC',
+    vs: 'usd',
+    interval: '1d',
+    source: 'sample-fixture'
+  });
+
+  assert.equal(sampleCsv.report.detectedFormat, 'csv:columns');
+  assert.equal(sampleCsv.report.rowsSeen, 3);
+  assert.equal(sampleCsv.output.candles[2].ts, Date.UTC(2026, 0, 4));
+
+  const seedOutput = execFileSync('npm', ['--silent', 'run', 'seed:sample'], {
+    cwd: process.cwd(),
+    env: {
+      ...process.env,
+      DB_PATH: databasePath
+    },
+    encoding: 'utf8'
+  });
+  const seedResult = JSON.parse(seedOutput);
+
+  assert.equal(seedResult.ok, true);
+  assert.equal(seedResult.result.rowsImported, 3);
+  assert.equal(seedResult.result.detectedFormat, 'normalized-json:sample-fixture');
+
+  const db = openDatabase(databasePath);
+  t.after(() => db.close());
+
+  const importedRows = db.prepare('SELECT COUNT(*) AS count FROM candles WHERE asset_id = ?').get('btc');
+  assert.equal(importedRows.count, 3);
+
+  const app = createApp({
+    appName: 'chrono-cache-test',
+    adminTitle: 'chrono-cache-test',
+    databasePath,
+    dataDir: tempDir,
+    assetsConfigPath: path.join(tempDir, 'missing-assets.json'),
+    adminAuth: {
+      username: 'admin',
+      password: 'password',
+      sessionSecret: 'sample-smoke-secret'
+    }
+  });
+  app.set('db', db);
+  app.set('assets', TEST_ASSETS);
+
+  const server = app.listen(0);
+  t.after(() => server.close());
+  await new Promise((resolve) => server.once('listening', resolve));
+
+  const { port } = server.address();
+  const baseUrl = `http://127.0.0.1:${port}`;
+  const historyResponse = await fetch(`${baseUrl}/api/v1/history/btc?interval=1d&from=2026-01-01&to=2026-01-04&cache=bypass`);
+  const history = await historyResponse.json();
+
+  assert.equal(historyResponse.status, 200);
+  assert.equal(history.asset.id, 'btc');
+  assert.equal(history.count, 3);
+  assert.deepEqual(history.candles.map((candle) => candle.ts), [
+    Date.UTC(2026, 0, 1),
+    Date.UTC(2026, 0, 2),
+    Date.UTC(2026, 0, 4)
+  ]);
+
+  const loginResponse = await fetch(`${baseUrl}/admin/login`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({ username: 'admin', password: 'password', returnTo: '/admin' }),
+    redirect: 'manual'
+  });
+  const sessionCookie = loginResponse.headers.get('set-cookie').split(';')[0];
+
+  assert.equal(loginResponse.status, 302);
+  assert.ok(sessionCookie.includes('chrono_cache_admin_session='));
+
+  const gapResponse = await fetch(`${baseUrl}/api/v1/admin/assets/btc/gaps?interval=1d&from=2026-01-01&to=2026-01-04`, {
+    headers: { cookie: sessionCookie }
+  });
+  const gapReport = await gapResponse.json();
+
+  assert.equal(gapResponse.status, 200);
+  assert.equal(gapReport.gaps.length, 1);
+  assert.equal(gapReport.gaps[0].from, Date.UTC(2026, 0, 3));
+
+  const healthResponse = await fetch(`${baseUrl}/api/v1/admin/system-health`, {
+    headers: { cookie: sessionCookie }
+  });
+  const health = await healthResponse.json();
+
+  assert.equal(healthResponse.status, 200);
+  assert.ok(['ok', 'degraded', 'critical'].includes(health.status));
+  assert.ok(Array.isArray(health.checks));
+  assert.ok(health.checks.some((check) => check.id === 'database_file_size'));
+
+  const resetOutput = execFileSync('npm', ['--silent', 'run', 'reset:sample'], {
+    cwd: process.cwd(),
+    env: {
+      ...process.env,
+      DB_PATH: databasePath
+    },
+    encoding: 'utf8'
+  });
+  const resetResult = JSON.parse(resetOutput);
+
+  assert.equal(resetResult.ok, true);
+  assert.equal(resetResult.deletedCandles, 3);
+  assert.equal(db.prepare('SELECT COUNT(*) AS count FROM candles WHERE asset_id = ?').get('btc').count, 0);
 });
 
 

@@ -34,7 +34,9 @@
     "jobs:clear-completed": "node scripts/cli.js jobs:clear-completed",
     "db:check": "node scripts/cli.js db:check",
     "bundle": "node scripts/create-portable-bundle.js",
-    "check-runtime": "node scripts/check-runtime.js"
+    "check-runtime": "node scripts/check-runtime.js",
+    "seed:sample": "node scripts/seed-sample.js",
+    "reset:sample": "node scripts/reset-sample.js"
   },
   "keywords": [
     "cache",

@@ -1,0 +1,40 @@
+{
+  "assetId": "btc",
+  "symbol": "BTC",
+  "vsCurrency": "usd",
+  "interval": "1d",
+  "source": "sample-fixture",
+  "detectedFormat": "normalized-json:sample-fixture",
+  "candles": [
+    {
+      "ts": 1767225600000,
+      "open": 42000,
+      "high": 43000,
+      "low": 41000,
+      "close": 42500,
+      "volume": 123.45,
+      "marketCap": 850000000000,
+      "fetchedAt": 1767571200000
+    },
+    {
+      "ts": 1767312000000,
+      "open": 42500,
+      "high": 44000,
+      "low": 42000,
+      "close": 43500,
+      "volume": 234.56,
+      "marketCap": 870000000000,
+      "fetchedAt": 1767571200000
+    },
+    {
+      "ts": 1767484800000,
+      "open": 44500,
+      "high": 45500,
+      "low": 44000,
+      "close": 45250,
+      "volume": 456.78,
+      "marketCap": 905000000000,
+      "fetchedAt": 1767571200000
+    }
+  ]
+}
