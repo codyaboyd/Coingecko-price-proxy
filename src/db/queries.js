@@ -241,11 +241,87 @@ function updateFetchRun(db, id, updates) {
     .run({ id, ...updates });
 }
 
+function toConfigChange(row) {
+  return {
+    id: row.id,
+    filePath: row.file_path,
+    backupPath: row.backup_path,
+    changedBy: row.changed_by,
+    summary: row.summary,
+    createdAt: row.created_at
+  };
+}
+
+function insertConfigChange(db, change) {
+  const result = db
+    .prepare(`
+      INSERT INTO config_changes (
+        file_path,
+        backup_path,
+        changed_by,
+        summary,
+        created_at
+      ) VALUES (
+        @filePath,
+        @backupPath,
+        @changedBy,
+        @summary,
+        @createdAt
+      )
+    `)
+    .run(change);
+
+  return getConfigChange(db, result.lastInsertRowid);
+}
+
+function getConfigChange(db, id) {
+  const row = db
+    .prepare(`
+      SELECT id, file_path, backup_path, changed_by, summary, created_at
+      FROM config_changes
+      WHERE id = ?
+    `)
+    .get(id);
+
+  return row ? toConfigChange(row) : null;
+}
+
+function listConfigChanges(db, limit = 25) {
+  return db
+    .prepare(`
+      SELECT id, file_path, backup_path, changed_by, summary, created_at
+      FROM config_changes
+      ORDER BY created_at DESC, id DESC
+      LIMIT @limit
+    `)
+    .all({ limit })
+    .map(toConfigChange);
+}
+
+function getNextConfigChangeForFile(db, change) {
+  const row = db
+    .prepare(`
+      SELECT id, file_path, backup_path, changed_by, summary, created_at
+      FROM config_changes
+      WHERE file_path = @filePath
+        AND (created_at > @createdAt OR (created_at = @createdAt AND id > @id))
+      ORDER BY created_at ASC, id ASC
+      LIMIT 1
+    `)
+    .get(change);
+
+  return row ? toConfigChange(row) : null;
+}
+
 module.exports = {
   countAssets,
+  getConfigChange,
+  getNextConfigChangeForFile,
   createFetchRun,
   getAssetCandleBounds,
   getPublicAsset,
+  insertConfigChange,
+  listConfigChanges,
   listFetchRunsForAsset,
   listPublicAssets,
   updateFetchRun,
