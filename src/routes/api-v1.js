@@ -9,6 +9,7 @@ const { assertTimestampRange, DAY_MS, parseDateInput } = require('../utils/date'
 const { buildSystemHealth } = require('../services/system-health');
 const { getAssetStaleness } = require('../services/staleness-service');
 const { getGlobalRateBudgetService } = require('../services/rate-budget-service');
+const { recordAdminEvent } = require('../services/admin-activity-service');
 const { createMaintenanceError, isMaintenanceMode } = require('../services/maintenance-service');
 const {
   buildHistoryCacheKey,
@@ -487,6 +488,12 @@ router.post('/admin/assets/:assetId/fetch', (req, res, next) => {
       vsCurrency: req.body.vsCurrency,
       conflictPolicy: req.body.conflictPolicy
     });
+    recordAdminEvent(req, {
+      action: 'manual fetch',
+      entityType: 'asset',
+      entityId: asset.id,
+      details: { jobId: job.id, from: req.body.from, to: req.body.to, interval: req.body.interval, vsCurrency: req.body.vsCurrency, conflictPolicy: req.body.conflictPolicy }
+    });
 
     res.status(202).json({ job, queue: scheduler.getStatus() });
   } catch (error) {
@@ -520,6 +527,12 @@ router.post('/admin/assets/:assetId/backfill', (req, res, next) => {
   try {
     requireMaintenanceDisabled(req, 'Maintenance mode is active; CoinGecko backfill jobs are paused.');
     const result = enqueueBackfill(getDatabase(req), getScheduler(req), req.params.assetId, req.body);
+    recordAdminEvent(req, {
+      action: 'backfill request',
+      entityType: 'asset',
+      entityId: req.params.assetId,
+      details: { request: result.request, gapCount: result.gaps.length, chunkCount: result.chunks.length, projectedCalls: result.projectedCalls, jobs: result.enqueuedJobs.map((job) => job.id) }
+    });
 
     res.status(202).json({
       asset: result.asset,

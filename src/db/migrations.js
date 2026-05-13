@@ -153,6 +153,32 @@ const MIGRATIONS = [
       CREATE INDEX IF NOT EXISTS idx_config_changes_file_created
         ON config_changes(file_path, created_at DESC, id DESC);
     `
+  },
+  {
+    version: 7,
+    name: 'add_admin_activity_log',
+    up: `
+      CREATE TABLE IF NOT EXISTS admin_events (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        actor TEXT NOT NULL,
+        action TEXT NOT NULL,
+        entity_type TEXT,
+        entity_id TEXT,
+        details_json TEXT,
+        ip_address TEXT,
+        user_agent TEXT,
+        created_at INTEGER NOT NULL
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_admin_events_created
+        ON admin_events(created_at DESC, id DESC);
+
+      CREATE INDEX IF NOT EXISTS idx_admin_events_action_created
+        ON admin_events(action, created_at DESC, id DESC);
+
+      CREATE INDEX IF NOT EXISTS idx_admin_events_entity_created
+        ON admin_events(entity_type, created_at DESC, id DESC);
+    `
   }
 ];
 
