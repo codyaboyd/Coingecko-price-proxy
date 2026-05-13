@@ -16,6 +16,7 @@ const { fetchMarketChartRange } = require('../services/coingecko');
 const { getGapReport } = require('../services/cache-policy');
 const { getGlobalRateBudgetService } = require('../services/rate-budget-service');
 const { buildSystemHealth, bytesToSummary } = require('../services/system-health');
+const { markStuckFetchRunsFailed, runDatabaseIntegrityCheck } = require('../services/db-integrity-service');
 const { getAssetStaleness } = require('../services/staleness-service');
 const { applyMaintenanceModeToRuntime, createMaintenanceError, isMaintenanceMode, setMaintenanceMode } = require('../services/maintenance-service');
 const { assertTimestampRange, DAY_MS, parseDateInput } = require('../utils/date');
@@ -350,6 +351,28 @@ function formatBackupForView(backup) {
       ...file,
       sizeLabel: bytesToSummary(file.sizeBytes),
       updatedAtIso: formatTimestamp(file.updatedAt)
+    }))
+  };
+}
+
+
+function redirectWithDbIntegrityAction(res, action, details) {
+  const params = new URLSearchParams({ dbIntegrityAction: action });
+
+  if (details) {
+    params.set('dbIntegrityDetails', details);
+  }
+
+  params.set('run', '1');
+  res.redirect(`/admin/db-integrity?${params.toString()}`);
+}
+
+function formatIntegrityReport(report) {
+  return {
+    ...report,
+    checks: report.checks.map((check) => ({
+      ...check,
+      detailCount: Array.isArray(check.details) ? check.details.length : 0
     }))
   };
 }
@@ -776,6 +799,44 @@ router.get('/system-health', (req, res, next) => {
       health,
       bytesToSummary
     });
+  } catch (error) {
+    next(error);
+  }
+});
+
+
+router.get('/db-integrity', (req, res, next) => {
+  try {
+    const config = req.app.get('config');
+    const report = req.query.run === '1'
+      ? runDatabaseIntegrityCheck(getDatabase(req))
+      : null;
+
+    res.render('admin-db-integrity', {
+      title: `${config.adminTitle} - Database Integrity`,
+      appName: config.appName,
+      report: report ? formatIntegrityReport(report) : null,
+      dbIntegrityAction: req.query.dbIntegrityAction || null,
+      dbIntegrityDetails: req.query.dbIntegrityDetails || null
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.post('/db-integrity/run', (req, res, next) => {
+  try {
+    runDatabaseIntegrityCheck(getDatabase(req));
+    redirectWithDbIntegrityAction(res, 'checked', 'Database integrity check completed.');
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.post('/db-integrity/mark-stuck-failed', (req, res, next) => {
+  try {
+    const result = markStuckFetchRunsFailed(getDatabase(req));
+    redirectWithDbIntegrityAction(res, 'marked-stuck-failed', `${result.changed} stuck fetch_run(s) marked failed.`);
   } catch (error) {
     next(error);
   }

@@ -17,6 +17,7 @@ const { fetchMarketChartRange } = require('../src/services/coingecko');
 const { createBackupService } = require('../src/services/backup-service');
 const { loadServerConfig } = require('../src/utils/config');
 const { isMaintenanceMode, setMaintenanceMode } = require('../src/services/maintenance-service');
+const { runDatabaseIntegrityCheck } = require('../src/services/db-integrity-service');
 
 const DEFAULT_EXPORT_FORMAT = 'csv';
 const EXPORT_FORMATS = new Set(['csv', 'json']);
@@ -25,6 +26,7 @@ function printUsage() {
   console.log('Usage:');
   console.log('  node scripts/cli.js migrate');
   console.log('  node scripts/cli.js validate-assets');
+  console.log('  node scripts/cli.js db:check');
   console.log('  node scripts/cli.js backup');
   console.log('  node scripts/cli.js backups:list');
   console.log('  node scripts/cli.js backups:prune');
@@ -149,6 +151,50 @@ function runMigrate() {
       : `${appliedMigrations.length} migration(s) applied`;
 
     console.log(`Migrations completed for ${config.databasePath}: ${suffix}`);
+  } finally {
+    db.close();
+  }
+}
+
+
+function printDatabaseIntegrityReport(report) {
+  console.log(`Database integrity check at ${report.checkedAtIso}`);
+  console.log(`Summary: ${report.summary.ok} ok, ${report.summary.warning} warning, ${report.summary.critical} critical`);
+
+  report.checks.forEach((check) => {
+    const detailCount = Array.isArray(check.details) ? check.details.length : 0;
+    console.log(`\n[${check.status.toUpperCase()}] ${check.label}`);
+    console.log(`  ${check.summary}`);
+
+    if (detailCount > 0) {
+      console.log(`  Details: ${detailCount} sampled row(s)`);
+      check.details.slice(0, 10).forEach((detail) => {
+        console.log(`    ${JSON.stringify(detail)}`);
+      });
+    }
+
+    if (check.repairCommands.length > 0) {
+      console.log('  Suggested repair guidance:');
+      check.repairCommands.forEach((command) => console.log(`    ${command}`));
+    }
+  });
+}
+
+function runDatabaseCheck() {
+  const config = loadServerConfig();
+  const db = openConfiguredDatabase(config);
+
+  try {
+    const report = runDatabaseIntegrityCheck(db);
+    printDatabaseIntegrityReport(report);
+
+    if (report.summary.critical > 0) {
+      process.exitCode = 2;
+    } else if (report.summary.warning > 0) {
+      process.exitCode = 1;
+    }
+
+    return report;
   } finally {
     db.close();
   }
@@ -510,6 +556,11 @@ async function main(argv = process.argv.slice(2)) {
     return;
   }
 
+  if (command === 'db:check') {
+    runDatabaseCheck();
+    return;
+  }
+
   if (command === 'validate-assets') {
     runValidateAssets();
     return;
@@ -591,6 +642,7 @@ module.exports = {
   main,
   parseOptions,
   runBackupDb,
+  runDatabaseCheck,
   runExportHistory,
   runListBackups,
   runMigrate,
