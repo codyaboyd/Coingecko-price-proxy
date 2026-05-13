@@ -28,6 +28,8 @@
       </div>
     </nav>
 
+    <%- include('admin-maintenance-banner') %>
+
     <main class="container py-4">
       <div class="d-flex justify-content-between align-items-start flex-wrap gap-3 mb-4">
         <div>
@@ -43,6 +45,10 @@
       <% if (previewError) { %>
         <div class="alert alert-warning" role="alert">Preview failed: <%= previewError %></div>
       <% } %>
+      <% if (maintenanceMode) { %>
+        <div class="alert alert-warning" role="alert">Imports are paused while maintenance mode is active.</div>
+      <% } %>
+
       <% if (result) { %>
         <div class="alert alert-success" role="alert">
           <div class="fw-semibold">Import run #<%= result.runId %> completed.</div>
@@ -117,7 +123,7 @@
                   </select>
                 </div>
                 <div class="col-12 d-flex gap-2">
-                  <button type="submit" class="btn btn-primary" <%= files.length === 0 ? 'disabled' : '' %>>Run conversion/import</button>
+                  <button type="submit" class="btn btn-primary" <%= (files.length === 0 || maintenanceMode) ? 'disabled' : '' %>>Run conversion/import</button>
                   <% if (selectedFile) { %>
                     <a class="btn btn-outline-secondary" href="/admin/imports?file=<%= encodeURIComponent(selectedFile) %>&asset=<%= encodeURIComponent(selectedAssetId) %>&interval=<%= encodeURIComponent(selectedInterval) %>&policy=<%= encodeURIComponent(selectedPolicy) %>">Refresh preview</a>
                   <% } %>

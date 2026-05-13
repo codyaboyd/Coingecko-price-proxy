@@ -18,6 +18,13 @@ function createApp(config) {
   app.set('view engine', 'ejs');
   app.set('views', path.join(process.cwd(), 'views'));
 
+  app.use((req, res, next) => {
+    const runtimeConfig = req.app.get('config') || {};
+    res.locals.maintenanceMode = runtimeConfig.maintenanceMode === true;
+    res.locals.maintenanceBannerMessage = 'Maintenance mode is active. Public history uses local cache only; fetch jobs and imports are paused.';
+    next();
+  });
+
   app.use(helmet({
     contentSecurityPolicy: {
       directives: {

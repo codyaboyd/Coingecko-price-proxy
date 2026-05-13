@@ -22,3 +22,9 @@ code {
 .health-card-critical {
   border-left-color: var(--bs-danger);
 }
+
+.maintenance-banner {
+  position: sticky;
+  top: 0;
+  z-index: 1030;
+}

@@ -23,6 +23,8 @@
       </div>
     </nav>
 
+    <%- include('admin-maintenance-banner') %>
+
     <% const badgeClass = (status) => status === 'ok' ? 'text-bg-success' : (status === 'warning' || status === 'degraded' ? 'text-bg-warning' : 'text-bg-danger'); %>
     <% const textClass = (status) => status === 'ok' ? 'text-success' : (status === 'warning' || status === 'degraded' ? 'text-warning' : 'text-danger'); %>
 

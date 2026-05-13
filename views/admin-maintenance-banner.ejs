@@ -1,0 +1,11 @@
+<% if (maintenanceMode) { %>
+  <div class="maintenance-banner alert alert-warning rounded-0 border-0 border-bottom border-warning mb-0" role="alert">
+    <div class="container d-flex align-items-center justify-content-between flex-wrap gap-2">
+      <div>
+        <strong>Maintenance mode is active.</strong>
+        <span><%= maintenanceBannerMessage %></span>
+      </div>
+      <span class="badge text-bg-dark">Safe solo operation</span>
+    </div>
+  </div>
+<% } %>

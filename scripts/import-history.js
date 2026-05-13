@@ -5,6 +5,7 @@ require('dotenv').config();
 const { initializeDatabase } = require('../src/db');
 const { importNormalizedHistoryFile } = require('../src/services/import-service');
 const { loadServerConfig } = require('../src/utils/config');
+const { isMaintenanceMode } = require('../src/services/maintenance-service');
 
 function printUsage() {
   console.log('Usage:');
@@ -70,6 +71,11 @@ function main() {
   }
 
   const config = loadServerConfig();
+
+  if (isMaintenanceMode(config)) {
+    throw new Error('Maintenance mode is active; imports are paused.');
+  }
+
   const db = initializeDatabase(config);
 
   try {

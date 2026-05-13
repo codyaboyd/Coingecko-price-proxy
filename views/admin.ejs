@@ -23,10 +23,41 @@
       </div>
     </nav>
 
+    <%- include('admin-maintenance-banner') %>
+
     <main class="container py-5">
       <div class="p-4 p-md-5 mb-4 rounded text-body-emphasis bg-body-secondary">
         <h1 class="display-6 fw-bold"><%= title %></h1>
         <p class="lead mb-0">Server-rendered admin shell for cache configuration and future price data operations.</p>
+      </div>
+
+      <div class="card shadow-sm mb-4 border-warning">
+        <div class="card-header bg-warning-subtle d-flex align-items-center justify-content-between flex-wrap gap-2">
+          <div>
+            <h2 class="h5 mb-1">Maintenance mode</h2>
+            <p class="text-secondary small mb-0">Safe solo operation disables CoinGecko fetch jobs and imports while keeping admin and public local history available.</p>
+          </div>
+          <% if (status.maintenanceMode) { %>
+            <span class="badge text-bg-warning">Enabled</span>
+          <% } else { %>
+            <span class="badge text-bg-success">Disabled</span>
+          <% } %>
+        </div>
+        <div class="card-body d-flex align-items-center justify-content-between flex-wrap gap-3">
+          <p class="mb-0">
+            <% if (status.maintenanceMode) { %>
+              Scheduler is paused due to maintenance; imports and CoinGecko fetch actions are blocked.
+            <% } else { %>
+              Automatic refresh and import operations are allowed.
+            <% } %>
+          </p>
+          <form method="post" action="/admin/maintenance" class="m-0">
+            <input type="hidden" name="mode" value="<%= status.maintenanceMode ? 'off' : 'on' %>">
+            <button type="submit" class="btn <%= status.maintenanceMode ? 'btn-outline-success' : 'btn-outline-warning' %>">
+              Turn maintenance <%= status.maintenanceMode ? 'off' : 'on' %>
+            </button>
+          </form>
+        </div>
       </div>
 
       <div class="row g-3 mb-4">
@@ -84,7 +115,9 @@
             <h2 class="h5 mb-1">Recent refresh scheduler</h2>
             <p class="text-secondary small mb-0">In-memory automatic refresh for enabled assets only.</p>
           </div>
-          <% if (recentRefresh.paused) { %>
+          <% if (recentRefresh.pauseReason === 'maintenance') { %>
+            <span class="badge text-bg-warning">Paused due to maintenance</span>
+          <% } else if (recentRefresh.paused) { %>
             <span class="badge text-bg-warning">Paused</span>
           <% } else { %>
             <span class="badge text-bg-success">Running</span>
@@ -106,7 +139,7 @@
             </div>
             <div class="col-md-3">
               <p class="text-uppercase text-secondary small fw-semibold mb-1">Next run</p>
-              <p class="mb-0"><%= recentRefresh.nextRunAtIso || 'Not scheduled' %></p>
+              <p class="mb-0"><%= recentRefresh.pauseReason === 'maintenance' ? 'Paused due to maintenance' : (recentRefresh.nextRunAtIso || 'Not scheduled') %></p>
             </div>
           </div>
 
@@ -114,11 +147,14 @@
             <div class="alert alert-warning" role="alert"><%= recentRefresh.lastError %></div>
           <% } %>
 
+          <% if (recentRefresh.pauseReason === 'maintenance') { %>
+            <div class="alert alert-warning" role="alert">Scheduler controls are disabled because maintenance mode is active.</div>
+          <% } %>
           <form class="d-inline" method="post" action="/admin/scheduler/repair-stale">
-            <button type="submit" class="btn btn-danger">Repair stale data now</button>
+            <button type="submit" class="btn btn-danger" <%= recentRefresh.pauseReason === 'maintenance' ? 'disabled' : '' %>>Repair stale data now</button>
           </form>
           <form class="d-inline" method="post" action="/admin/scheduler/run-now">
-            <button type="submit" class="btn btn-primary">Run refresh now</button>
+            <button type="submit" class="btn btn-primary" <%= recentRefresh.pauseReason === 'maintenance' ? 'disabled' : '' %>>Run refresh now</button>
           </form>
           <% if (recentRefresh.paused) { %>
             <form class="d-inline" method="post" action="/admin/scheduler/resume">

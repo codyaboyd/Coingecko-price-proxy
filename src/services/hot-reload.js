@@ -6,6 +6,7 @@ const { upsertAssets } = require('../db/queries');
 const { loadAssets } = require('./asset-service');
 const { loadServerConfig } = require('../utils/config');
 const { ensureDirectory, resolveFromRoot } = require('../utils/files');
+const { applyMaintenanceModeToRuntime } = require('./maintenance-service');
 const logger = require('../utils/logger');
 
 const RESTART_REQUIRED_SERVER_FIELDS = new Set([
@@ -20,7 +21,8 @@ const RESTART_REQUIRED_SERVER_FIELDS = new Set([
 const SAFE_RUNTIME_SERVER_FIELDS = new Set([
   'appName',
   'adminTitle',
-  'logLevel'
+  'logLevel',
+  'maintenanceMode'
 ]);
 
 function formatError(error) {
@@ -195,6 +197,10 @@ class HotReloadManager {
 
         if (SAFE_RUNTIME_SERVER_FIELDS.has(key)) {
           this.config[key] = nextConfig[key];
+
+          if (key === 'maintenanceMode' && this.app) {
+            applyMaintenanceModeToRuntime(this.app, nextConfig.maintenanceMode);
+          }
         } else if (RESTART_REQUIRED_SERVER_FIELDS.has(key)) {
           restartRequiredSettings.push(key);
         } else {

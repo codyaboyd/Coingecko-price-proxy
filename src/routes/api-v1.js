@@ -8,6 +8,7 @@ const { createScheduler } = require('../jobs/scheduler');
 const { assertTimestampRange, DAY_MS, parseDateInput } = require('../utils/date');
 const { buildSystemHealth } = require('../services/system-health');
 const { getAssetStaleness } = require('../services/staleness-service');
+const { createMaintenanceError, isMaintenanceMode } = require('../services/maintenance-service');
 const {
   buildHistoryCacheKey,
   getCachedResponse,
@@ -34,6 +35,12 @@ const INTERVAL_DURATIONS = {
   '1h': 60 * 60 * 1000,
   '1d': 24 * 60 * 60 * 1000
 };
+
+function requireMaintenanceDisabled(req, message) {
+  if (isMaintenanceMode(req.app.get('config'))) {
+    throw createMaintenanceError(message);
+  }
+}
 
 function getDatabase(req) {
   const db = req.app.get('db');
@@ -450,6 +457,7 @@ router.get('/admin/assets/:assetId/gaps', (req, res, next) => {
 
 router.post('/admin/assets/:assetId/fetch', (req, res, next) => {
   try {
+    requireMaintenanceDisabled(req, 'Maintenance mode is active; CoinGecko fetch jobs are paused.');
     const db = getDatabase(req);
     const asset = getPublicAsset(db, req.params.assetId);
 
@@ -476,6 +484,7 @@ router.post('/admin/assets/:assetId/fetch', (req, res, next) => {
 
 router.post('/admin/assets/:assetId/backfill', (req, res, next) => {
   try {
+    requireMaintenanceDisabled(req, 'Maintenance mode is active; CoinGecko backfill jobs are paused.');
     const result = enqueueBackfill(getDatabase(req), getScheduler(req), req.params.assetId, req.body);
 
     res.status(202).json({

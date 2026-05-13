@@ -4,5 +4,6 @@
   "port": 3000,
   "adminTitle": "Chrono Cache Admin",
   "databasePath": "./data/history.sqlite",
-  "assetsConfigPath": "./config/assets.json"
+  "assetsConfigPath": "./config/assets.json",
+  "maintenanceMode": false
 }

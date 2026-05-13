@@ -16,6 +16,7 @@ const { loadAssets, validateAssetsFile } = require('../src/services/asset-servic
 const { fetchMarketChartRange } = require('../src/services/coingecko');
 const { createBackupService } = require('../src/services/backup-service');
 const { loadServerConfig } = require('../src/utils/config');
+const { isMaintenanceMode, setMaintenanceMode } = require('../src/services/maintenance-service');
 
 const DEFAULT_EXPORT_FORMAT = 'csv';
 const EXPORT_FORMATS = new Set(['csv', 'json']);
@@ -30,6 +31,8 @@ function printUsage() {
   console.log('  node scripts/cli.js export-history --asset <id> [--from <date>] [--to <date>] [--interval <5m|1h|1d>] [--vs <currency>] [--format <csv|json>] [--output <path>]');
   console.log('  node scripts/cli.js repair-gaps --asset <id> --from <date> --to <date> [--interval <5m|1h|1d>] [--vs <currency>]');
   console.log('  node scripts/cli.js queue-status');
+  console.log('  node scripts/cli.js maintenance:on');
+  console.log('  node scripts/cli.js maintenance:off');
   console.log('  node scripts/cli.js cg-test <coingecko-id> <vs-currency>');
   console.log('');
   console.log('Options may be passed as --name value or --name=value.');
@@ -332,6 +335,10 @@ async function waitForSchedulerIdle(scheduler) {
 async function runRepairGaps(rawArgs) {
   const options = parseOptions(rawArgs);
   const config = loadServerConfig();
+
+  if (isMaintenanceMode(config)) {
+    throw new Error('Maintenance mode is active; gap repair fetch jobs are paused.');
+  }
   const db = openConfiguredDatabase(config);
 
   try {
@@ -398,6 +405,12 @@ function getPointCount(value) {
 }
 
 async function runCoinGeckoTest(args) {
+  const config = loadServerConfig();
+
+  if (isMaintenanceMode(config)) {
+    throw new Error('Maintenance mode is active; CoinGecko test fetches are paused.');
+  }
+
   const [coingeckoId, vsCurrency] = args;
 
   if (!coingeckoId || !vsCurrency) {
@@ -415,6 +428,13 @@ async function runCoinGeckoTest(args) {
   console.log(`prices: ${getPointCount(result.prices)}`);
   console.log(`market_caps: ${getPointCount(result.market_caps)}`);
   console.log(`total_volumes: ${getPointCount(result.total_volumes)}`);
+}
+
+
+function runMaintenanceCommand(enabled) {
+  const result = setMaintenanceMode(enabled);
+  console.log(`Maintenance mode ${result.maintenanceMode ? 'enabled' : 'disabled'} in ${path.relative(process.cwd(), result.configPath)}.`);
+  return result;
 }
 
 async function main(argv = process.argv.slice(2)) {
@@ -466,6 +486,16 @@ async function main(argv = process.argv.slice(2)) {
     return;
   }
 
+  if (command === 'maintenance:on') {
+    runMaintenanceCommand(true);
+    return;
+  }
+
+  if (command === 'maintenance:off') {
+    runMaintenanceCommand(false);
+    return;
+  }
+
   if (command === 'cg-test') {
     await runCoinGeckoTest(args);
     return;
@@ -492,6 +522,7 @@ module.exports = {
   runMigrate,
   runPruneBackups,
   runQueueStatus,
+  runMaintenanceCommand,
   runRepairGaps,
   runValidateAssets
 };

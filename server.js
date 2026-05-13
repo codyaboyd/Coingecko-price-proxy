@@ -38,7 +38,8 @@ function start() {
   const recentRefreshScheduler = createRecentRefreshScheduler({
     db,
     jobScheduler,
-    assets
+    assets,
+    maintenanceMode: config.maintenanceMode
   });
   const hotReloadManager = createHotReloadManager({
     app,
