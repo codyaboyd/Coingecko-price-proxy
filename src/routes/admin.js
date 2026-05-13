@@ -15,6 +15,7 @@ const { RESTORE_CONFIRMATION_PHRASE, restoreBackup } = require('../services/rest
 const { fetchMarketChartRange } = require('../services/coingecko');
 const { getGapReport } = require('../services/cache-policy');
 const { buildSystemHealth, bytesToSummary } = require('../services/system-health');
+const { getAssetStaleness } = require('../services/staleness-service');
 const { assertTimestampRange, DAY_MS, parseDateInput } = require('../utils/date');
 const logger = require('../utils/logger');
 
@@ -746,13 +747,15 @@ router.get('/assets', (req, res, next) => {
   try {
     const config = req.app.get('config');
     const db = getDatabase(req);
+    const scheduler = getScheduler(req);
     const assets = getConfiguredAssets(req).map((asset) => {
       const bounds = getAssetCandleBounds(db, asset.id);
 
       return {
         ...asset,
         earliestIso: formatTimestamp(bounds.earliest_ts),
-        latestIso: formatTimestamp(bounds.latest_ts)
+        latestIso: formatTimestamp(bounds.latest_ts),
+        staleness: getAssetStaleness(db, asset, { jobScheduler: scheduler })
       };
     });
 
@@ -941,17 +944,20 @@ router.get('/assets/:id', (req, res, next) => {
   try {
     const config = req.app.get('config');
     const db = getDatabase(req);
-    const asset = getPublicAsset(db, req.params.id);
+    const publicAsset = getPublicAsset(db, req.params.id);
 
-    if (!asset) {
+    if (!publicAsset) {
       const error = new Error(`Asset '${req.params.id}' was not found.`);
       error.status = 404;
       next(error);
       return;
     }
 
+    const configuredAsset = findConfiguredAsset(req, req.params.id);
+    const asset = configuredAsset ? { ...publicAsset, ...configuredAsset } : publicAsset;
     const bounds = getAssetCandleBounds(db, asset.id);
     const fetchRuns = listFetchRunsForAsset(db, asset.id, 10);
+    const staleness = getAssetStaleness(db, asset, { jobScheduler: getScheduler(req) });
 
     res.render('admin-asset-detail', {
       title: `${config.adminTitle} - ${asset.symbol}`,
@@ -964,7 +970,8 @@ router.get('/assets/:id', (req, res, next) => {
         latestIso: formatTimestamp(bounds.latest_ts),
         count: bounds.candle_count || 0
       },
-      fetchRuns
+      fetchRuns,
+      staleness
     });
   } catch (error) {
     next(error);
@@ -994,6 +1001,16 @@ router.post('/scheduler/resume', (req, res, next) => {
   try {
     getRecentRefreshScheduler(req).resume();
     redirectWithSchedulerAction(res, 'resumed');
+  } catch (error) {
+    next(error);
+  }
+});
+
+
+router.post('/scheduler/repair-stale', (req, res, next) => {
+  try {
+    const result = getRecentRefreshScheduler(req).runNow();
+    redirectWithSchedulerAction(res, 'repair-stale', `${result.jobCount} repair job(s) queued`);
   } catch (error) {
     next(error);
   }

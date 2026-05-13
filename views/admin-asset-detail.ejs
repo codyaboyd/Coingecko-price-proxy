@@ -70,6 +70,39 @@
             </div>
           </div>
 
+          <div class="card shadow-sm mb-4">
+            <div class="card-header bg-white d-flex justify-content-between align-items-center">
+              <h2 class="h5 mb-0">Staleness status</h2>
+              <% const stalenessBadgeClasses = { fresh: 'success', stale: 'warning', empty: 'secondary', fetching: 'info', failed: 'danger' }; %>
+              <span class="badge text-bg-<%= stalenessBadgeClasses[staleness.overallStatus] || 'secondary' %>"><%= staleness.overallStatus %></span>
+            </div>
+            <div class="card-body">
+              <div class="vstack gap-2">
+                <% staleness.intervals.forEach((intervalStatus) => { %>
+                  <div class="border rounded p-2">
+                    <div class="d-flex justify-content-between align-items-center">
+                      <strong><%= intervalStatus.interval %></strong>
+                      <span class="badge text-bg-<%= stalenessBadgeClasses[intervalStatus.status] || 'secondary' %>"><%= intervalStatus.status %></span>
+                    </div>
+                    <div class="small text-body-secondary">Latest candle: <%= intervalStatus.latestTsIso || 'none' %>; stale after <%= intervalStatus.staleAfterMinutes %> minutes.</div>
+                    <% if (intervalStatus.lastError) { %>
+                      <div class="small text-danger">Last error: <%= intervalStatus.lastError %></div>
+                    <% } %>
+                    <% if (intervalStatus.failure && intervalStatus.failure.inCooldown) { %>
+                      <div class="small text-danger">Cooling down until <%= intervalStatus.failure.cooldownUntilIso %>.</div>
+                    <% } %>
+                  </div>
+                <% }) %>
+              </div>
+              <div class="d-flex flex-wrap gap-2 mt-3">
+                <form method="post" action="/admin/scheduler/repair-stale">
+                  <button type="submit" class="btn btn-danger">Repair stale data now</button>
+                </form>
+                <a class="btn btn-outline-secondary" href="/api/v1/admin/assets/<%= encodeURIComponent(asset.id) %>/staleness">GET staleness JSON</a>
+              </div>
+            </div>
+          </div>
+
           <div class="card shadow-sm">
             <div class="card-header bg-white">
               <h2 class="h5 mb-0">Local API test</h2>

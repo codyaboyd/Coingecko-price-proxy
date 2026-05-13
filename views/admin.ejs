@@ -114,6 +114,9 @@
             <div class="alert alert-warning" role="alert"><%= recentRefresh.lastError %></div>
           <% } %>
 
+          <form class="d-inline" method="post" action="/admin/scheduler/repair-stale">
+            <button type="submit" class="btn btn-danger">Repair stale data now</button>
+          </form>
           <form class="d-inline" method="post" action="/admin/scheduler/run-now">
             <button type="submit" class="btn btn-primary">Run refresh now</button>
           </form>

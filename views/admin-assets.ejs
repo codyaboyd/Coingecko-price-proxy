@@ -52,6 +52,7 @@
                 <th scope="col">CoinGecko ID</th>
                 <th scope="col">Enabled</th>
                 <th scope="col">Priority</th>
+                <th scope="col">Staleness</th>
                 <th scope="col">Earliest candle</th>
                 <th scope="col">Latest candle</th>
                 <th scope="col">Actions</th>
@@ -60,7 +61,7 @@
             <tbody>
               <% if (assets.length === 0) { %>
                 <tr>
-                  <td colspan="8" class="text-body-secondary">No assets are configured.</td>
+                  <td colspan="9" class="text-body-secondary">No assets are configured.</td>
                 </tr>
               <% } %>
               <% assets.forEach((asset) => { %>
@@ -76,6 +77,19 @@
                     <% } %>
                   </td>
                   <td><%= asset.priority %></td>
+                  <td>
+                    <% const badgeClasses = { fresh: 'success', stale: 'warning', empty: 'secondary', fetching: 'info', failed: 'danger' }; %>
+                    <span class="badge text-bg-<%= badgeClasses[asset.staleness.overallStatus] || 'secondary' %>"><%= asset.staleness.overallStatus %></span>
+                    <div class="small text-body-secondary mt-1">
+                      <% asset.staleness.intervals.forEach((intervalStatus) => { %>
+                        <span class="me-2"><%= intervalStatus.interval %>: <%= intervalStatus.status %></span>
+                      <% }) %>
+                    </div>
+                    <% const errorInterval = asset.staleness.intervals.find((intervalStatus) => intervalStatus.lastError); %>
+                    <% if (errorInterval) { %>
+                      <div class="small text-danger text-truncate" title="<%= errorInterval.lastError %>"><%= errorInterval.lastError %></div>
+                    <% } %>
+                  </td>
                   <td><%= asset.earliestIso || '—' %></td>
                   <td><%= asset.latestIso || '—' %></td>
                   <td>
