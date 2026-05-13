@@ -173,7 +173,7 @@ class JobScheduler {
     });
 
     if (rows.length > 0) {
-      logger.warn(`Recovered ${rows.length} stale running job(s) older than 30 minutes.`);
+      logger.jobWarn(`Recovered ${rows.length} stale running job(s) older than 30 minutes.`);
     }
 
     return rows.length;
@@ -211,7 +211,7 @@ class JobScheduler {
       this.backupTimer.unref();
     }
 
-    logger.info(`Daily SQLite backup job scheduled for ${new Date(this.nextBackupAt).toISOString()}.`);
+    logger.jobInfo(`Daily SQLite backup job scheduled for ${new Date(this.nextBackupAt).toISOString()}.`);
     return this.nextBackupAt;
   }
 
@@ -315,7 +315,7 @@ class JobScheduler {
     });
 
     const job = this.getJob(result.lastInsertRowid);
-    logger.info(`Queued ${type} job #${job.id} for asset ${payload.assetId || 'n/a'}.`);
+    logger.jobInfo(`Queued ${type} job #${job.id} for asset ${payload.assetId || 'n/a'}.`);
 
     if (options.autoStart !== false) {
       this.process();
@@ -413,14 +413,14 @@ class JobScheduler {
     }
 
     this.activeJobs.set(job.id, job);
-    logger.info(`Starting ${job.type} job #${job.id}.`);
+    logger.jobInfo(`Starting ${job.type} job #${job.id}.`);
 
     try {
       const result = await handler(job, this);
       job.result = result;
       if (!this.isJobCancelled(job.id)) {
         this.markJobCompleted(job.id);
-        logger.info(`Finished ${job.type} job #${job.id}.`);
+        logger.jobInfo(`Finished ${job.type} job #${job.id}.`);
       }
     } catch (error) {
       const failedJob = this.markJobFailed(job, error.message);
@@ -435,7 +435,7 @@ class JobScheduler {
           entityId: job.payload.assetId || null
         });
       }
-      logger.error(`Failed ${job.type} job #${job.id}: ${error.message}`);
+      logger.jobError(`Failed ${job.type} job #${job.id}: ${error.message}`);
     } finally {
       this.activeJobs.delete(job.id);
       this.process();

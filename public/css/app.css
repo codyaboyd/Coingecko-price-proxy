@@ -28,3 +28,14 @@ code {
   top: 0;
   z-index: 1030;
 }
+
+.log-viewer {
+  max-height: 70vh;
+  overflow: auto;
+  padding: 1rem;
+  background: #111827;
+  color: #e5e7eb;
+  font-size: 0.875rem;
+  white-space: pre-wrap;
+  word-break: break-word;
+}

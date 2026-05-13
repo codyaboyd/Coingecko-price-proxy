@@ -1,0 +1,145 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title><%= title %></title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="/public/css/app.css" rel="stylesheet">
+  </head>
+  <body>
+    <nav class="navbar navbar-expand-lg bg-dark navbar-dark">
+      <div class="container">
+        <a class="navbar-brand" href="/admin"><%= appName %></a>
+        <div class="navbar-nav ms-auto">
+          <a class="nav-link" href="/admin/assets">Assets</a>
+          <a class="nav-link" href="/admin/imports">Imports</a>
+          <a class="nav-link" href="/admin/backups">Backups</a>
+          <a class="nav-link" href="/admin/activity">Activity</a>
+          <a class="nav-link" href="/admin/doctor">Doctor</a>
+          <a class="nav-link" href="/admin/reload-status">Reload Status</a>
+          <a class="nav-link" href="/admin/system-health">System Health</a>
+          <a class="nav-link" href="/admin/db-integrity">DB Integrity</a>
+          <a class="nav-link" href="/admin/rate-budget">Rate Budget</a>
+          <a class="nav-link active" aria-current="page" href="/admin/logs">Logs</a>
+          <a class="nav-link" href="/admin/api-test">API Test</a>
+          <%- include('admin-alert-bell') %>
+          <a class="nav-link" href="/admin/logout">Logout</a>
+        </div>
+      </div>
+    </nav>
+
+    <%- include('admin-maintenance-banner') %>
+
+    <main class="container py-5">
+      <div class="d-flex justify-content-between align-items-start flex-wrap gap-3 mb-4">
+        <div>
+          <h1 class="display-6 fw-bold mb-2">Admin logs</h1>
+          <p class="lead mb-0">View, filter, download, and clear files in <code>logs/</code>.</p>
+          <p class="text-secondary mb-0">Only known log files in the logs directory are available.</p>
+        </div>
+        <a class="btn btn-outline-primary" href="/admin/logs/download?file=<%= encodeURIComponent(selectedFile) %>">Download selected log</a>
+      </div>
+
+      <% if (logAction) { %>
+        <div class="alert alert-info alert-dismissible fade show" role="alert">
+          Log action: <strong><%= logAction %></strong><% if (logDetails) { %> — <%= logDetails %><% } %>
+          <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+        </div>
+      <% } %>
+
+      <% if (error) { %>
+        <div class="alert alert-danger alert-dismissible fade show" role="alert">
+          <%= error %>
+          <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+        </div>
+      <% } %>
+
+      <div class="card shadow-sm mb-4">
+        <div class="card-header bg-white">
+          <h2 class="h5 mb-0">Choose log and filter latest lines</h2>
+        </div>
+        <div class="card-body">
+          <form method="get" action="/admin/logs" class="row g-3 align-items-end">
+            <div class="col-md-4">
+              <label class="form-label" for="file">Log file</label>
+              <select class="form-select" id="file" name="file">
+                <% files.forEach((file) => { %>
+                  <option value="<%= file.name %>" <%= file.name === selectedFile ? 'selected' : '' %>><%= file.name %> (<%= file.sizeLabel %>)</option>
+                <% }) %>
+              </select>
+            </div>
+            <div class="col-md-2">
+              <label class="form-label" for="lines">Latest lines</label>
+              <input class="form-control" id="lines" name="lines" type="number" min="1" max="5000" value="<%= lineCount %>">
+            </div>
+            <div class="col-md-4">
+              <label class="form-label" for="filter">Filter text</label>
+              <input class="form-control" id="filter" name="filter" type="search" value="<%= filter %>" placeholder="Optional text filter">
+            </div>
+            <div class="col-md-2 d-grid">
+              <button type="submit" class="btn btn-primary">View lines</button>
+            </div>
+          </form>
+        </div>
+      </div>
+
+      <div class="row g-4">
+        <div class="col-lg-8">
+          <div class="card shadow-sm h-100">
+            <div class="card-header bg-white d-flex justify-content-between align-items-center flex-wrap gap-2">
+              <div>
+                <h2 class="h5 mb-1"><%= selectedFile %></h2>
+                <p class="small text-secondary mb-0"><%= lines.length %> matching line(s) shown.</p>
+              </div>
+              <a class="btn btn-sm btn-outline-primary" href="/admin/logs/download?file=<%= encodeURIComponent(selectedFile) %>">Download</a>
+            </div>
+            <div class="card-body p-0">
+              <% if (lines.length === 0) { %>
+                <p class="text-secondary text-center py-5 mb-0">No matching log lines.</p>
+              <% } else { %>
+                <pre class="log-viewer mb-0"><% lines.forEach((line) => { %><%= line %>
+<% }) %></pre>
+              <% } %>
+            </div>
+          </div>
+        </div>
+        <div class="col-lg-4">
+          <div class="card shadow-sm mb-4">
+            <div class="card-header bg-white">
+              <h2 class="h5 mb-0">Available files</h2>
+            </div>
+            <div class="list-group list-group-flush">
+              <% files.forEach((file) => { %>
+                <a class="list-group-item list-group-item-action <%= file.name === selectedFile ? 'active' : '' %>" href="/admin/logs?file=<%= encodeURIComponent(file.name) %>&lines=<%= encodeURIComponent(lineCount) %>&filter=<%= encodeURIComponent(filter) %>">
+                  <div class="d-flex w-100 justify-content-between gap-2">
+                    <span><%= file.name %></span>
+                    <small><%= file.sizeLabel %></small>
+                  </div>
+                  <small><%= file.updatedAtIso || 'not written yet' %></small>
+                </a>
+              <% }) %>
+            </div>
+          </div>
+
+          <div class="card shadow-sm border-danger">
+            <div class="card-header bg-danger-subtle">
+              <h2 class="h5 mb-0">Clear selected log</h2>
+            </div>
+            <div class="card-body">
+              <p class="small text-secondary">This truncates only the selected file. Type <code>CLEAR</code> and confirm in your browser prompt.</p>
+              <form method="post" action="/admin/logs/clear" onsubmit="return confirm('Clear <%= selectedFile %>? This cannot be undone.');">
+                <input type="hidden" name="file" value="<%= selectedFile %>">
+                <label class="form-label" for="confirmation">Confirmation</label>
+                <input class="form-control mb-3" id="confirmation" name="confirmation" placeholder="CLEAR" autocomplete="off">
+                <button type="submit" class="btn btn-outline-danger">Clear log</button>
+              </form>
+            </div>
+          </div>
+        </div>
+      </div>
+    </main>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+  </body>
+</html>

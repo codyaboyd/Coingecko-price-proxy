@@ -19,6 +19,7 @@ const { validateAssetsFile } = require('../src/services/asset-service');
 const { loadServerConfig } = require('../src/utils/config');
 const { createScheduler } = require('../src/jobs/scheduler');
 const { buildAdminDoctorReport } = require('../src/services/admin-doctor-service');
+const { clearLogFile, listLogFiles, readLatestLogLines, resolveLogFile, writeLog } = require('../src/services/log-service');
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const FIXTURE_CSV = path.join(process.cwd(), 'test-fixtures', 'sample-history.csv');
@@ -53,6 +54,26 @@ function seedDatabase(t) {
   upsertAssets(db, TEST_ASSETS, Date.UTC(2026, 0, 1));
   return db;
 }
+
+
+test('log service rotates, filters, clears, and rejects unsafe paths', (t) => {
+  const logDir = fs.mkdtempSync(path.join(os.tmpdir(), 'chrono-cache-logs-'));
+  t.after(() => fs.rmSync(logDir, { recursive: true, force: true }));
+
+  writeLog('server.log', 'alpha first line', { logDir, maxBytes: 40, maxFiles: 2 });
+  writeLog('server.log', 'beta second line', { logDir, maxBytes: 40, maxFiles: 2 });
+  writeLog('server.log', 'alpha third line forces rotation', { logDir, maxBytes: 40, maxFiles: 2 });
+
+  const files = listLogFiles({ logDir }).map((file) => file.name);
+  assert.ok(files.includes('server.log'));
+  assert.ok(files.includes('server.log.1'));
+  assert.deepEqual(readLatestLogLines('server.log.1', { logDir, lines: 5, filter: 'alpha' }), ['alpha first line', 'alpha third line forces rotation']);
+
+  assert.throws(() => resolveLogFile('../server.log', { logDir }), /Invalid log file/);
+  assert.throws(() => clearLogFile('server.log', 'NOPE', { logDir }), /Type CLEAR/);
+  clearLogFile('server.log', 'CLEAR', { logDir });
+  assert.deepEqual(readLatestLogLines('server.log', { logDir }), []);
+});
 
 test('config loads from the default server config', () => {
   const config = loadServerConfig();

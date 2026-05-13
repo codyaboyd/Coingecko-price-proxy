@@ -16,6 +16,7 @@ const { fetchMarketChartRange } = require('../services/coingecko');
 const { getGapReport } = require('../services/cache-policy');
 const { getGlobalRateBudgetService } = require('../services/rate-budget-service');
 const { buildSystemHealth, bytesToSummary } = require('../services/system-health');
+const { clearLogFile, listLogFiles, readLatestLogLines, resolveLogFile } = require('../services/log-service');
 const { buildAdminDoctorReport } = require('../services/admin-doctor-service');
 const { markStuckFetchRunsFailed, runDatabaseIntegrityCheck } = require('../services/db-integrity-service');
 const { getAssetStaleness } = require('../services/staleness-service');
@@ -357,6 +358,20 @@ function formatBackupForView(backup) {
       updatedAtIso: formatTimestamp(file.updatedAt)
     }))
   };
+}
+
+
+function formatLogFileForView(file) {
+  return {
+    ...file,
+    sizeLabel: bytesToSummary(file.sizeBytes),
+    updatedAtIso: formatTimestamp(file.updatedAt)
+  };
+}
+
+function redirectWithLogAction(res, params) {
+  const searchParams = new URLSearchParams(params);
+  res.redirect(`/admin/logs?${searchParams.toString()}`);
 }
 
 
@@ -964,6 +979,52 @@ router.post('/backups/:id/delete', (req, res, next) => {
     redirectWithBackupAction(res, 'deleted', `${result.baseName}: ${result.deleted} file(s) deleted`);
   } catch (error) {
     next(error);
+  }
+});
+
+
+router.get('/logs', (req, res, next) => {
+  try {
+    const config = req.app.get('config');
+    const files = listLogFiles().map(formatLogFileForView);
+    const selectedFile = req.query.file || (files[0] && files[0].name) || 'server.log';
+    const lineCount = req.query.lines || '200';
+    const filter = req.query.filter || '';
+    const lines = readLatestLogLines(selectedFile, { lines: lineCount, filter });
+
+    res.render('admin-logs', {
+      title: `${config.adminTitle} - Logs`,
+      appName: config.appName,
+      files,
+      selectedFile,
+      lineCount,
+      filter,
+      lines,
+      logAction: req.query.logAction || null,
+      logDetails: req.query.logDetails || null,
+      error: req.query.error || null
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.get('/logs/download', (req, res, next) => {
+  try {
+    const filePath = resolveLogFile(req.query.file || 'server.log');
+    res.download(filePath, path.basename(filePath));
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.post('/logs/clear', (req, res) => {
+  try {
+    const result = clearLogFile(req.body.file || 'server.log', req.body.confirmation);
+    recordAdminEvent(req, { action: 'log cleared', entityType: 'log', entityId: result.fileName, details: { fileName: result.fileName } });
+    redirectWithLogAction(res, { file: result.fileName, logAction: 'cleared', logDetails: `${result.fileName} cleared` });
+  } catch (error) {
+    redirectWithLogAction(res, { file: req.body.file || 'server.log', error: error.message });
   }
 });
 
