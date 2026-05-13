@@ -2,8 +2,8 @@ const express = require('express');
 const fs = require('fs');
 const path = require('path');
 
-const { getAssetCandleBounds, getPublicAsset, listFetchRunsForAsset, upsertAssets } = require('../db/queries');
-const { readAssetConfig, validateAssetsPayload, loadAssets } = require('../services/asset-service');
+const { getAssetCandleBounds, getConfigChange, getNextConfigChangeForFile, getPublicAsset, listConfigChanges, listFetchRunsForAsset, upsertAssets } = require('../db/queries');
+const { readAssetConfig, loadAssets } = require('../services/asset-service');
 const { CONFLICT_POLICIES, DEFAULT_CONFLICT_POLICY, SUPPORTED_INTERVALS, countCandles } = require('../services/history-service');
 const { convertDumpFile, importNormalizedHistoryFile, previewNormalizedHistoryFile } = require('../services/import-service');
 const { ensureDirectory, resolveFromRoot } = require('../utils/files');
@@ -18,8 +18,9 @@ const { getGlobalRateBudgetService } = require('../services/rate-budget-service'
 const { buildSystemHealth, bytesToSummary } = require('../services/system-health');
 const { markStuckFetchRunsFailed, runDatabaseIntegrityCheck } = require('../services/db-integrity-service');
 const { getAssetStaleness } = require('../services/staleness-service');
-const { applyMaintenanceModeToRuntime, createMaintenanceError, isMaintenanceMode, setMaintenanceMode } = require('../services/maintenance-service');
+const { applyMaintenanceModeToRuntime, createMaintenanceError, isMaintenanceMode } = require('../services/maintenance-service');
 const { assertTimestampRange, DAY_MS, parseDateInput } = require('../utils/date');
+const { parseJsonText, rollbackConfigChange, saveConfigChange } = require('../services/config-change-service');
 const logger = require('../utils/logger');
 
 const router = express.Router();
@@ -463,29 +464,96 @@ function readEditableAssetConfig(req) {
   return { configPath, payload };
 }
 
-function makeBackupPath(configPath) {
-  const now = new Date();
-  const stamp = now.toISOString().replace(/[:.]/g, '-');
-  return `${configPath}.${stamp}.bak`;
+function getAdminActor(req) {
+  return req.adminUser && req.adminUser.username ? req.adminUser.username : 'admin-ui';
 }
 
-function writeAssetConfigSafely(configPath, payload) {
-  const errors = validateAssetsPayload(payload);
+function saveAdminConfigChange(req, filePath, payload, summary) {
+  return saveConfigChange({
+    db: getDatabase(req),
+    config: req.app.get('config'),
+    filePath,
+    payload,
+    changedBy: getAdminActor(req),
+    summary
+  });
+}
 
-  if (errors.length > 0) {
-    throw new Error(`Invalid asset config:\n${errors.map((error) => `- ${error}`).join('\n')}`);
+function readTextFileSafe(filePath) {
+  return fs.readFileSync(resolveFromRoot(filePath), 'utf8');
+}
+
+function buildSimpleDiff(oldText, newText) {
+  const oldLines = oldText.split('\n');
+  const newLines = newText.split('\n');
+  const max = Math.max(oldLines.length, newLines.length);
+  const lines = [];
+
+  for (let index = 0; index < max; index += 1) {
+    const oldLine = oldLines[index];
+    const newLine = newLines[index];
+
+    if (oldLine === newLine) {
+      lines.push({ type: 'context', number: index + 1, text: oldLine === undefined ? '' : oldLine });
+    } else {
+      if (oldLine !== undefined) {
+        lines.push({ type: 'removed', number: index + 1, text: oldLine });
+      }
+      if (newLine !== undefined) {
+        lines.push({ type: 'added', number: index + 1, text: newLine });
+      }
+    }
   }
 
-  const backupPath = makeBackupPath(configPath);
-  const tempPath = `${configPath}.${process.pid}.${Date.now()}.tmp`;
-  const json = `${JSON.stringify(payload, null, 2)}\n`;
-  const mode = fs.statSync(configPath).mode & 0o777;
+  return lines;
+}
 
-  fs.copyFileSync(configPath, backupPath);
-  fs.writeFileSync(tempPath, json, { encoding: 'utf8', mode });
-  fs.renameSync(tempPath, configPath);
+function loadConfigChangeDiff(req, change) {
+  if (!change) {
+    return null;
+  }
 
-  return backupPath;
+  const nextChange = getNextConfigChangeForFile(getDatabase(req), change);
+  const oldText = readTextFileSafe(change.backupPath);
+  const newText = nextChange ? readTextFileSafe(nextChange.backupPath) : readTextFileSafe(change.filePath);
+
+  return {
+    change,
+    oldLabel: change.backupPath,
+    newLabel: nextChange ? nextChange.backupPath : change.filePath,
+    lines: buildSimpleDiff(oldText, newText)
+  };
+}
+
+function hotReloadConfigFile(req, filePath, payload) {
+  if (filePath === 'config/assets.json') {
+    reloadAssetsAfterWrite(req, payload);
+    return;
+  }
+
+  if (filePath === 'config/server.json') {
+    const hotReloadManager = getHotReloadManager(req);
+    if (hotReloadManager && typeof hotReloadManager.reloadServerConfig === 'function') {
+      hotReloadManager.reloadServerConfig();
+      return;
+    }
+
+    applyMaintenanceModeToRuntime(req.app, payload.maintenanceMode === true);
+  }
+}
+
+function redirectWithConfigAction(res, action, details, selectedId) {
+  const params = new URLSearchParams({ configAction: action });
+
+  if (details) {
+    params.set('configDetails', details);
+  }
+
+  if (selectedId) {
+    params.set('change', selectedId);
+  }
+
+  res.redirect(`/admin/config-history?${params.toString()}`);
 }
 
 function reloadAssetsAfterWrite(req, payload) {
@@ -842,6 +910,65 @@ router.post('/db-integrity/mark-stuck-failed', (req, res, next) => {
   }
 });
 
+router.get('/config-history', (req, res, next) => {
+  try {
+    const config = req.app.get('config');
+    const changes = listConfigChanges(getDatabase(req), 50).map((change) => ({
+      ...change,
+      createdAtIso: formatTimestamp(change.createdAt)
+    }));
+    const selectedId = Number(req.query.change || (changes[0] && changes[0].id));
+    const selectedChange = selectedId ? getConfigChange(getDatabase(req), selectedId) : null;
+    const diff = selectedChange ? loadConfigChangeDiff(req, selectedChange) : null;
+
+    res.render('admin-config-history', {
+      title: `${config.adminTitle} - Config History`,
+      appName: config.appName,
+      changes,
+      selectedId,
+      diff,
+      editableConfigs: [
+        { filePath: 'config/assets.json', json: readTextFileSafe('config/assets.json') },
+        { filePath: 'config/server.json', json: readTextFileSafe(path.join(config.configDir, 'server.json')) }
+      ],
+      configAction: req.query.configAction || null,
+      configDetails: req.query.configDetails || null
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.post('/config-history/edit', (req, res) => {
+  try {
+    const filePath = String(req.body.filePath || '');
+    const payload = parseJsonText(req.body.configJson || '');
+    const summary = String(req.body.summary || '').trim() || `Edit ${filePath}`;
+    const change = saveAdminConfigChange(req, filePath, payload, summary);
+    hotReloadConfigFile(req, filePath, payload);
+    redirectWithConfigAction(res, 'saved', `${filePath} saved. Backup: ${change.backupPath}`, change.id);
+  } catch (error) {
+    redirectWithConfigAction(res, 'save failed', error.message);
+  }
+});
+
+router.post('/config-history/:id/rollback', (req, res) => {
+  try {
+    const change = getConfigChange(getDatabase(req), Number(req.params.id));
+    const rollback = rollbackConfigChange({
+      db: getDatabase(req),
+      config: req.app.get('config'),
+      change,
+      changedBy: getAdminActor(req)
+    });
+    const payload = parseJsonText(fs.readFileSync(resolveFromRoot(change.backupPath), 'utf8'));
+    hotReloadConfigFile(req, change.filePath, payload);
+    redirectWithConfigAction(res, 'rolled back', `Restored ${change.filePath} from ${change.backupPath}. Current backup: ${rollback.backupPath}`, rollback.id);
+  } catch (error) {
+    redirectWithConfigAction(res, 'rollback failed', error.message, req.params.id);
+  }
+});
+
 router.get('/assets', (req, res, next) => {
   try {
     const config = req.app.get('config');
@@ -900,7 +1027,7 @@ router.get('/assets/:id/edit', (req, res, next) => {
 
 router.post('/assets/:id/edit', (req, res, next) => {
   try {
-    const { configPath, payload } = readEditableAssetConfig(req);
+    const { payload } = readEditableAssetConfig(req);
     const index = payload.assets.findIndex((asset) => asset.id === req.params.id);
 
     if (index === -1) {
@@ -911,12 +1038,12 @@ router.post('/assets/:id/edit', (req, res, next) => {
     }
 
     payload.assets[index] = normalizeConfigAssetForm(req.body, payload.assets[index]);
-    const backupPath = writeAssetConfigSafely(configPath, payload);
-    reloadAssetsAfterWrite(req, payload);
+    const change = saveAdminConfigChange(req, 'config/assets.json', payload, `Edit asset ${payload.assets[index].id}`);
+    hotReloadConfigFile(req, 'config/assets.json', payload);
 
     const params = new URLSearchParams({
       alert: 'success',
-      message: `Saved ${payload.assets[index].symbol}. Backup: ${path.relative(process.cwd(), backupPath)}`
+      message: `Saved ${payload.assets[index].symbol}. Backup: ${change.backupPath}`
     });
     res.redirect(`/admin/assets/${encodeURIComponent(req.params.id)}/edit?${params.toString()}`);
   } catch (error) {
@@ -1152,12 +1279,14 @@ router.post('/scheduler/run-now', (req, res, next) => {
 router.post('/maintenance', (req, res, next) => {
   try {
     const enable = req.body.mode === 'on' || req.body.maintenanceMode === 'true';
-    const result = setMaintenanceMode(enable, { config: req.app.get('config') });
-    applyMaintenanceModeToRuntime(req.app, result.maintenanceMode);
+    const payload = parseJsonText(fs.readFileSync(resolveFromRoot(path.join(req.app.get('config').configDir, 'server.json')), 'utf8'));
+    payload.maintenanceMode = enable;
+    const change = saveAdminConfigChange(req, 'config/server.json', payload, `Maintenance mode ${enable ? 'enabled' : 'disabled'}`);
+    hotReloadConfigFile(req, 'config/server.json', payload);
     redirectWithSchedulerAction(
       res,
-      result.maintenanceMode ? 'maintenance-on' : 'maintenance-off',
-      `Maintenance mode ${result.maintenanceMode ? 'enabled' : 'disabled'} in ${path.relative(process.cwd(), result.configPath)}`
+      enable ? 'maintenance-on' : 'maintenance-off',
+      `Maintenance mode ${enable ? 'enabled' : 'disabled'} in config/server.json; backup: ${change.backupPath}`
     );
   } catch (error) {
     next(error);

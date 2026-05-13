@@ -133,6 +133,26 @@ const MIGRATIONS = [
       CREATE INDEX IF NOT EXISTS idx_jobs_updated
         ON jobs(status, updated_at);
     `
+  },
+  {
+    version: 6,
+    name: 'add_config_change_history',
+    up: `
+      CREATE TABLE IF NOT EXISTS config_changes (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        file_path TEXT NOT NULL,
+        backup_path TEXT NOT NULL,
+        changed_by TEXT NOT NULL,
+        summary TEXT NOT NULL,
+        created_at INTEGER NOT NULL
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_config_changes_created
+        ON config_changes(created_at DESC, id DESC);
+
+      CREATE INDEX IF NOT EXISTS idx_config_changes_file_created
+        ON config_changes(file_path, created_at DESC, id DESC);
+    `
   }
 ];
 

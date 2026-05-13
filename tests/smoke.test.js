@@ -82,6 +82,7 @@ test('migrations run on an empty database', (t) => {
   assert.ok(tables.includes('candles'));
   assert.ok(tables.includes('jobs'));
   assert.ok(tables.includes('import_runs'));
+  assert.ok(tables.includes('config_changes'));
   assert.deepEqual(versions, MIGRATIONS.map((migration) => migration.version));
 });
 
