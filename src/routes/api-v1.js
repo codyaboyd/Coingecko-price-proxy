@@ -10,6 +10,7 @@ const { buildSystemHealth } = require('../services/system-health');
 const { getAssetStaleness } = require('../services/staleness-service');
 const { getGlobalRateBudgetService } = require('../services/rate-budget-service');
 const { recordAdminEvent } = require('../services/admin-activity-service');
+const { buildOpenApiDocument } = require('../services/api-docs');
 const { createMaintenanceError, isMaintenanceMode } = require('../services/maintenance-service');
 const {
   buildHistoryCacheKey,
@@ -367,6 +368,13 @@ function sendHistoryResponse(res, payload) {
 }
 
 
+router.get('/openapi.json', (req, res, next) => {
+  try {
+    res.json(buildOpenApiDocument({ assets: listPublicAssets(getDatabase(req)) }));
+  } catch (error) {
+    next(error);
+  }
+});
 
 router.get('/admin/rate-budget', (req, res, next) => {
   try {
