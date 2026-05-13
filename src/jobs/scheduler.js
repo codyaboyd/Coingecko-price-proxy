@@ -3,6 +3,7 @@ const logger = require('../utils/logger');
 const { getGlobalLimiter } = require('../utils/limiter');
 const { FETCH_JOB_TYPES, runFetchHistoryJob } = require('./fetch-history-job');
 const { createBackupService } = require('../services/backup-service');
+const { createAlert } = require('../services/alert-service');
 
 const JOB_TYPES = new Set([
   'recent_refresh',
@@ -424,6 +425,16 @@ class JobScheduler {
     } catch (error) {
       const failedJob = this.markJobFailed(job, error.message);
       this.recordFailure(failedJob || { ...job, status: 'failed', error: error.message });
+      if (failedJob && failedJob.status === 'failed' && FETCH_JOB_TYPES.has(job.type)) {
+        createAlert(this.db, {
+          severity: 'critical',
+          type: 'asset_fetch_failing_repeatedly',
+          title: `Asset fetch failing repeatedly: ${job.payload.assetId || 'unknown'}`,
+          message: `${job.type} job #${job.id} failed after ${job.attempts}/${job.maxAttempts} attempts: ${error.message}`,
+          entityType: 'asset',
+          entityId: job.payload.assetId || null
+        });
+      }
       logger.error(`Failed ${job.type} job #${job.id}: ${error.message}`);
     } finally {
       this.activeJobs.delete(job.id);

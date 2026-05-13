@@ -1,6 +1,7 @@
 const { getMissingWindows, floorToUtcBoundary, INTERVAL_STEPS_MS } = require('../services/cache-policy');
 const logger = require('../utils/logger');
 const { getIntervalStaleness } = require('../services/staleness-service');
+const { createAlert } = require('../services/alert-service');
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const MINUTE_MS = 60 * 1000;
@@ -319,6 +320,14 @@ class RecentRefreshScheduler {
       this.runDue().catch((error) => {
         this.lastError = error.message;
         logger.error(`Recent refresh scheduler failed: ${error.message}`);
+        createAlert(this.db, {
+          severity: 'critical',
+          type: 'scheduler_stopped_unexpectedly',
+          title: 'Scheduler stopped unexpectedly',
+          message: `Recent refresh scheduler failed: ${error.message}`,
+          entityType: 'scheduler',
+          entityId: 'recent-refresh'
+        });
         this.scheduleFromStates();
       });
     }, delay);

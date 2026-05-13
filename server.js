@@ -30,10 +30,12 @@ function start() {
   const { createHotReloadManager } = require('./src/services/hot-reload');
   const { createScheduler } = require('./src/jobs/scheduler');
   const { createRecentRefreshScheduler } = require('./src/jobs/recent-refresh-scheduler');
+  const { setGlobalAlertDatabase } = require('./src/services/alert-service');
 
   const assets = loadAssets(config.assetsConfigPath);
   const db = initializeDatabase(config, { syncAssets: false });
   const app = createApp(config);
+  setGlobalAlertDatabase(db);
   const jobScheduler = createScheduler({ db, config });
   const recentRefreshScheduler = createRecentRefreshScheduler({
     db,
@@ -80,6 +82,7 @@ function start() {
     jobScheduler.stopDailyBackupJob();
     Promise.resolve(hotReloadManager.stop()).finally(() => {
       server.close(() => {
+        setGlobalAlertDatabase(null);
         db.close();
         process.exit(0);
       });

@@ -9,6 +9,7 @@ const { runMigrations, MIGRATIONS } = require('../src/db/migrations');
 const { openDatabase } = require('../src/db/node-sqlite');
 const { getPublicAsset, listPublicAssets, upsertAssets } = require('../src/db/queries');
 const { adminEventsToCsv, insertAdminEvent, listAdminEvents } = require('../src/services/admin-activity-service');
+const { createAlert, listAlerts, updateAlertStatus } = require('../src/services/alert-service');
 const { getGapReport } = require('../src/services/cache-policy');
 const { getAssetStaleness, STALENESS_RULES } = require('../src/services/staleness-service');
 const { markStuckFetchRunsFailed, runDatabaseIntegrityCheck } = require('../src/services/db-integrity-service');
@@ -86,6 +87,7 @@ test('migrations run on an empty database', (t) => {
   assert.ok(tables.includes('import_runs'));
   assert.ok(tables.includes('config_changes'));
   assert.ok(tables.includes('admin_events'));
+  assert.ok(tables.includes('alerts'));
   assert.deepEqual(versions, MIGRATIONS.map((migration) => migration.version));
 });
 
@@ -125,6 +127,39 @@ test('admin activity events can be inserted, filtered, and exported as CSV', (t)
   assert.match(csv, /id,created_at,actor,action,entity_type,entity_id,details_json,ip_address,user_agent/);
   assert.match(csv, /manual fetch/);
   assert.match(csv, /node-test/);
+});
+
+
+test('alerts can be created, listed, acknowledged, and resolved', (t) => {
+  const db = seedDatabase(t);
+  const alert = createAlert(db, {
+    severity: 'critical',
+    type: 'disk_space_low',
+    title: 'Disk space low',
+    message: 'Only 100MB free.',
+    entityType: 'system',
+    entityId: 'project_disk'
+  });
+
+  assert.equal(alert.status, 'open');
+  assert.equal(listAlerts(db, { status: 'open' }).length, 1);
+
+  const duplicate = createAlert(db, {
+    severity: 'critical',
+    type: 'disk_space_low',
+    title: 'Disk space low',
+    message: 'Still low.',
+    entityType: 'system',
+    entityId: 'project_disk'
+  });
+  assert.equal(duplicate.id, alert.id);
+
+  const acknowledged = updateAlertStatus(db, alert.id, 'acknowledged');
+  assert.equal(acknowledged.status, 'acknowledged');
+  assert.ok(acknowledged.acknowledgedAt);
+
+  const resolved = updateAlertStatus(db, alert.id, 'resolved');
+  assert.equal(resolved.status, 'resolved');
 });
 
 test('assets validate from config/assets.json', () => {

@@ -8,6 +8,7 @@ const { loadServerConfig } = require('../utils/config');
 const { ensureDirectory, resolveFromRoot } = require('../utils/files');
 const { applyMaintenanceModeToRuntime } = require('./maintenance-service');
 const logger = require('../utils/logger');
+const { createAlert } = require('./alert-service');
 
 const RESTART_REQUIRED_SERVER_FIELDS = new Set([
   'host',
@@ -313,6 +314,15 @@ class HotReloadManager {
 
     if (normalized.status === 'success') {
       logger.info(normalized.message);
+    } else if (normalized.status === 'error') {
+      createAlert(this.db, {
+        severity: 'critical',
+        type: 'config_reload_failed',
+        title: `Config reload failed: ${normalized.target}`,
+        message: [normalized.message, ...normalized.errors].filter(Boolean).join(' '),
+        entityType: 'config',
+        entityId: normalized.target
+      });
     }
   }
 
