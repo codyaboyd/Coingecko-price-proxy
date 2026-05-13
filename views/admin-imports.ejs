@@ -34,8 +34,8 @@
     <main class="container py-4">
       <div class="d-flex justify-content-between align-items-start flex-wrap gap-3 mb-4">
         <div>
-          <h1 class="mb-1">Import history</h1>
-          <p class="text-secondary mb-0">Preview files in <code>data/imports</code>, convert raw dumps, and import normalized candles into SQLite.</p>
+          <h1 class="mb-1">Import inbox</h1>
+          <p class="text-secondary mb-0">Drop raw CSV or JSON files into <code>data/imports</code>. Files are hashed, registered once, and never deleted automatically.</p>
         </div>
         <a href="/admin" class="btn btn-outline-secondary">Back to dashboard</a>
       </div>
@@ -52,32 +52,51 @@
 
       <% if (result) { %>
         <div class="alert alert-success" role="alert">
-          <div class="fw-semibold">Import run #<%= result.runId %> completed.</div>
+          <div class="fw-semibold">Import workflow #<%= result.runId %> completed.</div>
           <div><%= result.rowsImported %> row change(s) from <%= result.rowsSeen %> row(s) seen using <code><%= result.policy %></code>.</div>
-          <div>Normalized file: <code><%= result.normalizedFile %></code></div>
+          <div>Workflow file: <code><%= result.normalizedFile %></code></div>
+          <% if (result.rawFile) { %><div>Raw file kept at: <code><%= result.rawFile %></code></div><% } %>
           <% if (result.conversionReport) { %>
             <div>Converted <%= result.conversionReport.rowsConverted %> row(s); skipped <%= result.conversionReport.rowsSkipped %>; detected <code><%= result.conversionReport.detectedFormat %></code>.</div>
           <% } %>
         </div>
       <% } %>
 
+      <div class="card shadow-sm mb-4">
+        <div class="card-header bg-white">
+          <h2 class="h5 mb-0">Solo-developer import workflow</h2>
+        </div>
+        <div class="card-body">
+          <ol class="row row-cols-1 row-cols-md-3 g-3 list-unstyled mb-0">
+            <% ['Preview', 'Map columns', 'Convert', 'Validate', 'Import', 'Archive'].forEach((step, index) => { %>
+              <li class="col">
+                <div class="border rounded p-3 h-100">
+                  <span class="badge text-bg-primary me-2"><%= index + 1 %></span><span class="fw-semibold"><%= step %></span>
+                </div>
+              </li>
+            <% }) %>
+          </ol>
+        </div>
+      </div>
+
       <div class="row g-4">
         <section class="col-lg-4">
           <div class="card shadow-sm mb-4">
             <div class="card-header bg-white">
-              <h2 class="h5 mb-0">Pending files</h2>
+              <h2 class="h5 mb-0">Inbox files</h2>
             </div>
             <div class="list-group list-group-flush">
               <% if (files.length === 0) { %>
                 <div class="list-group-item text-secondary">No files found in <code>data/imports</code>.</div>
               <% } %>
               <% files.forEach((file) => { %>
-                <a class="list-group-item list-group-item-action <%= file.name === selectedFile ? 'active' : '' %>" href="/admin/imports?file=<%= encodeURIComponent(file.name) %>&asset=<%= encodeURIComponent(selectedAssetId) %>&interval=<%= encodeURIComponent(selectedInterval) %>&policy=<%= encodeURIComponent(selectedPolicy) %>">
+                <a class="list-group-item list-group-item-action <%= selectedImportFile && file.id === selectedImportFile.id ? 'active' : '' %>" href="/admin/imports?importFileId=<%= file.id %>&asset=<%= encodeURIComponent(selectedAssetId) %>&interval=<%= encodeURIComponent(selectedInterval) %>&policy=<%= encodeURIComponent(selectedPolicy) %>">
                   <div class="d-flex w-100 justify-content-between gap-2">
-                    <span class="text-break"><%= file.name %></span>
-                    <small><%= file.size %> B</small>
+                    <span class="text-break"><%= file.filename %></span>
+                    <span class="badge text-bg-<%= file.status === 'failed' ? 'danger' : (file.status === 'imported' ? 'success' : 'secondary') %>"><%= file.status %></span>
                   </div>
-                  <small class="<%= file.name === selectedFile ? 'text-white-50' : 'text-secondary' %>"><%= file.updatedAtIso %></small>
+                  <small class="<%= selectedImportFile && file.id === selectedImportFile.id ? 'text-white-50' : 'text-secondary' %>"><%= file.size %> B · sha256:<%= file.shortHash %><br><%= file.updatedAtIso %></small>
+                  <% if (file.lastError) { %><div><small class="text-danger"><%= file.lastError %></small></div><% } %>
                 </a>
               <% }) %>
             </div>
@@ -87,15 +106,16 @@
         <section class="col-lg-8">
           <div class="card shadow-sm mb-4">
             <div class="card-header bg-white">
-              <h2 class="h5 mb-0">Convert and import</h2>
+              <h2 class="h5 mb-0">Map, convert, validate, import</h2>
             </div>
             <div class="card-body">
               <form method="post" action="/admin/imports/run" class="row g-3">
+                <input type="hidden" name="importFileId" value="<%= selectedImportFile ? selectedImportFile.id : '' %>">
                 <div class="col-12">
                   <label class="form-label" for="file">Import file</label>
                   <select class="form-select" id="file" name="file" required>
                     <% files.forEach((file) => { %>
-                      <option value="<%= file.name %>" <%= file.name === selectedFile ? 'selected' : '' %>><%= file.name %></option>
+                      <option value="<%= file.filename %>" <%= selectedImportFile && file.id === selectedImportFile.id ? 'selected' : '' %>><%= file.filename %> (<%= file.status %>)</option>
                     <% }) %>
                   </select>
                 </div>
@@ -123,28 +143,39 @@
                     <% }) %>
                   </select>
                 </div>
-                <div class="col-12 d-flex gap-2">
-                  <button type="submit" class="btn btn-primary" <%= (files.length === 0 || maintenanceMode) ? 'disabled' : '' %>>Run conversion/import</button>
-                  <% if (selectedFile) { %>
-                    <a class="btn btn-outline-secondary" href="/admin/imports?file=<%= encodeURIComponent(selectedFile) %>&asset=<%= encodeURIComponent(selectedAssetId) %>&interval=<%= encodeURIComponent(selectedInterval) %>&policy=<%= encodeURIComponent(selectedPolicy) %>">Refresh preview</a>
+                <div class="col-12">
+                  <div class="form-text">Column mapping is auto-detected from common timestamp, OHLC, volume, and market-cap headers. Validate the preview before importing.</div>
+                </div>
+                <div class="col-12 d-flex flex-wrap gap-2">
+                  <button type="submit" class="btn btn-primary" <%= (files.length === 0 || maintenanceMode || (selectedImportFile && selectedImportFile.status === 'imported')) ? 'disabled' : '' %>>Convert, validate, and import</button>
+                  <% if (selectedImportFile) { %>
+                    <a class="btn btn-outline-secondary" href="/admin/imports?importFileId=<%= selectedImportFile.id %>&asset=<%= encodeURIComponent(selectedAssetId) %>&interval=<%= encodeURIComponent(selectedInterval) %>&policy=<%= encodeURIComponent(selectedPolicy) %>">Preview / refresh</a>
                   <% } %>
                 </div>
               </form>
+              <% if (selectedImportFile) { %>
+                <form method="post" action="/admin/imports/archive" class="mt-3">
+                  <input type="hidden" name="importFileId" value="<%= selectedImportFile.id %>">
+                  <button type="submit" class="btn btn-outline-dark">Archive raw file</button>
+                  <span class="form-text ms-2">Manual action; raw files are not archived or deleted automatically.</span>
+                </form>
+              <% } %>
             </div>
           </div>
 
           <div class="card shadow-sm">
             <div class="card-header bg-white d-flex justify-content-between align-items-center flex-wrap gap-2">
-              <h2 class="h5 mb-0">Preview first 25 rows</h2>
+              <h2 class="h5 mb-0">Preview and validation</h2>
               <% if (preview) { %>
                 <span class="badge text-bg-secondary"><%= preview.rowsSeen %> row(s), <%= preview.detectedFormat %></span>
               <% } %>
             </div>
             <div class="card-body">
               <% if (!preview) { %>
-                <p class="text-secondary mb-0">Choose a pending file to preview import rows.</p>
+                <p class="text-secondary mb-0">Choose an inbox file to preview import rows.</p>
               <% } else { %>
                 <dl class="row small mb-3">
+                  <dt class="col-sm-3">State</dt><dd class="col-sm-9"><span class="badge text-bg-secondary"><%= selectedImportFile ? selectedImportFile.status : 'previewed' %></span></dd>
                   <dt class="col-sm-3">Asset</dt><dd class="col-sm-9"><code><%= preview.assetId || selectedAssetId %></code></dd>
                   <dt class="col-sm-3">Currency</dt><dd class="col-sm-9"><code><%= preview.vsCurrency || 'usd' %></code></dd>
                   <dt class="col-sm-3">Interval</dt><dd class="col-sm-9"><code><%= preview.interval || selectedInterval %></code></dd>

@@ -5,7 +5,7 @@ const path = require('path');
 const { getAssetCandleBounds, getConfigChange, getNextConfigChangeForFile, getPublicAsset, listConfigChanges, listFetchRunsForAsset, upsertAssets } = require('../db/queries');
 const { readAssetConfig, loadAssets } = require('../services/asset-service');
 const { CONFLICT_POLICIES, DEFAULT_CONFLICT_POLICY, SUPPORTED_INTERVALS, countCandles } = require('../services/history-service');
-const { convertDumpFile, importNormalizedHistoryFile, previewNormalizedHistoryFile } = require('../services/import-service');
+const { convertDumpFile, getImportFile, importNormalizedHistoryFile, listImportFiles, previewNormalizedHistoryFile, registerImportFile, updateImportFile } = require('../services/import-service');
 const { ensureDirectory, resolveFromRoot } = require('../utils/files');
 const { createScheduler } = require('../jobs/scheduler');
 const { buildRecentRefreshJobs, createRecentRefreshScheduler, normalizeFetchPolicy } = require('../jobs/recent-refresh-scheduler');
@@ -91,14 +91,36 @@ function getImportsDirectory(req) {
   return resolveFromRoot(path.join(config.dataDir, 'imports'));
 }
 
-function listPendingImportFiles(req) {
-  const importsDir = getImportsDirectory(req);
+function getImportArchiveDirectory(req) {
+  return path.join(getImportsDirectory(req), 'archive');
+}
 
-  if (!fs.existsSync(importsDir)) {
-    return [];
+function getImportFailedDirectory(req) {
+  return path.join(getImportsDirectory(req), 'failed');
+}
+
+function ensureImportInboxDirectories(req) {
+  ensureDirectory(getImportsDirectory(req));
+  ensureDirectory(getImportArchiveDirectory(req));
+  ensureDirectory(getImportFailedDirectory(req));
+}
+
+function isImportInboxFile(importsDir, absolutePath) {
+  const relativePath = path.relative(importsDir, absolutePath);
+
+  if (!relativePath || relativePath.startsWith('..') || path.isAbsolute(relativePath)) {
+    return false;
   }
 
-  const files = [];
+  const parts = relativePath.split(path.sep);
+  return !['archive', 'failed', 'converted'].includes(parts[0]);
+}
+
+function syncImportInbox(req) {
+  const db = getDatabase(req);
+  const importsDir = getImportsDirectory(req);
+  ensureImportInboxDirectories(req);
+
   const scan = (directory, prefix = '') => {
     fs.readdirSync(directory, { withFileTypes: true }).forEach((entry) => {
       if (entry.name.startsWith('.')) {
@@ -107,6 +129,10 @@ function listPendingImportFiles(req) {
 
       const absolutePath = path.join(directory, entry.name);
       const relativePath = path.join(prefix, entry.name);
+
+      if (!isImportInboxFile(importsDir, absolutePath)) {
+        return;
+      }
 
       if (entry.isDirectory()) {
         scan(absolutePath, relativePath);
@@ -117,18 +143,36 @@ function listPendingImportFiles(req) {
         return;
       }
 
-      const stats = fs.statSync(absolutePath);
-      files.push({
-        name: relativePath,
-        size: stats.size,
-        updatedAt: stats.mtimeMs,
-        updatedAtIso: formatTimestamp(stats.mtimeMs)
-      });
+      registerImportFile(db, absolutePath, { filename: relativePath });
     });
   };
 
   scan(importsDir);
-  return files.sort((left, right) => right.updatedAt - left.updatedAt);
+  return listImportFiles(db);
+}
+
+function formatImportFileForView(file) {
+  let stats = null;
+
+  try {
+    stats = fs.existsSync(file.fullPath) ? fs.statSync(file.fullPath) : null;
+  } catch (error) {
+    stats = null;
+  }
+
+  return {
+    ...file,
+    name: file.filename,
+    size: stats ? stats.size : 0,
+    updatedAtIso: formatTimestamp(file.updatedAt),
+    createdAtIso: formatTimestamp(file.createdAt),
+    shortHash: file.fileHash.slice(0, 12),
+    exists: Boolean(stats)
+  };
+}
+
+function listPendingImportFiles(req) {
+  return syncImportInbox(req).map(formatImportFileForView);
 }
 
 function assertInsideDirectory(baseDir, candidatePath, message) {
@@ -221,25 +265,46 @@ function previewImportFile(filePath, options) {
 function renderImportsPage(req, res, extras = {}) {
   const config = req.app.get('config');
   const assets = getConfiguredAssets(req);
-  const selectedFile = extras.selectedFile || req.query.file || (listPendingImportFiles(req)[0] || {}).name || null;
-  const selectedAssetId = extras.assetId || req.query.asset || (assets[0] || {}).id || '';
-  const selectedAsset = assets.find((asset) => asset.id === selectedAssetId) || assets[0] || null;
-  const selectedInterval = extras.interval || req.query.interval || '1d';
-  const selectedPolicy = extras.policy || req.query.policy || DEFAULT_CONFLICT_POLICY;
   const files = listPendingImportFiles(req);
+  const selectedImportId = Number(extras.importFileId || req.query.importFileId || req.query.fileId || 0) || null;
+  const selectedById = selectedImportId ? files.find((file) => file.id === selectedImportId) : null;
+  const selectedByName = extras.selectedFile || req.query.file || null;
+  const selectedImportFile = selectedById || files.find((file) => file.filename === selectedByName) || files[0] || null;
+  const selectedFile = selectedImportFile ? selectedImportFile.filename : null;
+  const selectedAssetId = extras.assetId || req.query.asset || (selectedImportFile && selectedImportFile.assetId) || (assets[0] || {}).id || '';
+  const selectedAsset = assets.find((asset) => asset.id === selectedAssetId) || assets[0] || null;
+  const selectedInterval = extras.interval || req.query.interval || (selectedImportFile && selectedImportFile.interval) || '1d';
+  const selectedPolicy = extras.policy || req.query.policy || DEFAULT_CONFLICT_POLICY;
   let preview = extras.preview || null;
   let previewError = extras.previewError || null;
 
-  if (!preview && selectedFile && selectedAsset) {
+  if (!preview && selectedImportFile && selectedAsset) {
     try {
-      preview = previewImportFile(resolveImportFile(req, selectedFile), {
+      preview = previewImportFile(resolveImportFile(req, selectedImportFile.filename), {
         assetId: selectedAsset.id,
         symbol: selectedAsset.symbol,
         vsCurrency: selectedAsset.vsCurrency,
         interval: selectedInterval
       });
+      updateImportFile(getDatabase(req), selectedImportFile.id, {
+        status: selectedImportFile.status === 'pending' ? 'previewed' : selectedImportFile.status,
+        detectedFormat: preview.detectedFormat,
+        assetId: selectedAsset.id,
+        interval: selectedInterval,
+        rowsSeen: preview.rowsSeen,
+        lastError: null
+      });
+      selectedImportFile.status = selectedImportFile.status === 'pending' ? 'previewed' : selectedImportFile.status;
+      selectedImportFile.detectedFormat = preview.detectedFormat;
+      selectedImportFile.assetId = selectedAsset.id;
+      selectedImportFile.interval = selectedInterval;
+      selectedImportFile.rowsSeen = preview.rowsSeen;
+      selectedImportFile.lastError = null;
     } catch (error) {
       previewError = error.message;
+      if (selectedImportFile.status !== 'imported') {
+        updateImportFile(getDatabase(req), selectedImportFile.id, { status: 'failed', lastError: error.message });
+      }
       logger.warn(`Import preview failed for ${selectedFile}: ${error.message}`);
     }
   }
@@ -251,6 +316,7 @@ function renderImportsPage(req, res, extras = {}) {
     files,
     intervals: Array.from(SUPPORTED_INTERVALS),
     policies: Array.from(CONFLICT_POLICIES),
+    selectedImportFile,
     selectedFile,
     selectedAssetId,
     selectedInterval,
@@ -804,7 +870,9 @@ router.get('/imports', (req, res, next) => {
 router.post('/imports/run', (req, res, next) => {
   try {
     requireMaintenanceDisabled(req, 'Maintenance mode is active; imports are paused.');
-    const fileName = req.body.file;
+    const importFileId = Number(req.body.importFileId || 0);
+    const importFile = importFileId ? getImportFile(getDatabase(req), importFileId) : null;
+    const fileName = importFile ? importFile.filename : req.body.file;
     const assetId = req.body.assetId;
     const interval = Array.from(SUPPORTED_INTERVALS).includes(req.body.interval) ? req.body.interval : '1d';
     const policy = Array.from(CONFLICT_POLICIES).includes(req.body.policy) ? req.body.policy : DEFAULT_CONFLICT_POLICY;
@@ -815,7 +883,12 @@ router.post('/imports/run', (req, res, next) => {
       throw new Error('Choose a configured asset before importing.');
     }
 
+    if (importFile && importFile.status === 'imported') {
+      throw new Error('This file hash has already been imported. Archive it or choose a different file.');
+    }
+
     const sourcePath = resolveImportFile(req, fileName);
+    const registeredFile = importFile || registerImportFile(getDatabase(req), sourcePath, { filename: fileName });
     let normalizedPath = sourcePath;
     let conversionReport = null;
 
@@ -832,6 +905,14 @@ router.post('/imports/run', (req, res, next) => {
         detectedFormat: conversion.report.detectedFormat
       }, null, 2)}\n`);
       conversionReport = conversion.report;
+      updateImportFile(getDatabase(req), registeredFile.id, {
+        status: 'converted',
+        detectedFormat: conversion.report.detectedFormat,
+        assetId: asset.id,
+        interval,
+        rowsSeen: conversion.report.rowsSeen,
+        lastError: null
+      });
     }
 
     const result = importNormalizedHistoryFile(normalizedPath, {
@@ -842,6 +923,16 @@ router.post('/imports/run', (req, res, next) => {
       interval
     });
 
+    updateImportFile(getDatabase(req), registeredFile.id, {
+      status: 'imported',
+      detectedFormat: result.detectedFormat,
+      assetId: asset.id,
+      interval,
+      rowsSeen: result.rowsSeen,
+      rowsImported: result.rowsImported,
+      lastError: null
+    });
+
     recordAdminEvent(req, {
       action: 'import run',
       entityType: 'import',
@@ -850,17 +941,25 @@ router.post('/imports/run', (req, res, next) => {
     });
 
     renderImportsPage(req, res, {
-      selectedFile: path.relative(getImportsDirectory(req), normalizedPath),
+      importFileId: registeredFile.id,
       assetId: asset.id,
       interval,
       policy,
       result: {
         ...result,
         normalizedFile: path.relative(process.cwd(), normalizedPath),
+        rawFile: path.relative(process.cwd(), sourcePath),
         conversionReport
       }
     });
   } catch (error) {
+    const importFileId = Number(req.body.importFileId || 0);
+    if (importFileId) {
+      const failedFile = getImportFile(getDatabase(req), importFileId);
+      if (failedFile && failedFile.status !== 'imported') {
+        updateImportFile(getDatabase(req), importFileId, { status: 'failed', lastError: error.message });
+      }
+    }
     recordAdminEvent(req, {
       action: 'import run',
       entityType: 'import',
@@ -868,12 +967,55 @@ router.post('/imports/run', (req, res, next) => {
       details: { status: 'failed', assetId: req.body.assetId, fileName: req.body.file, error: error.message }
     });
     renderImportsPage(req, res, {
+      importFileId,
       selectedFile: req.body.file,
       assetId: req.body.assetId,
       interval: req.body.interval,
       policy: req.body.policy,
       error: error.message
     });
+  }
+});
+
+router.post('/imports/archive', (req, res, next) => {
+  try {
+    const importFileId = Number(req.body.importFileId || 0);
+    const importFile = importFileId ? getImportFile(getDatabase(req), importFileId) : null;
+
+    if (!importFile) {
+      throw new Error('Choose a registered import file to archive.');
+    }
+
+    const sourcePath = resolveImportFile(req, importFile.filename);
+    const archiveDir = getImportArchiveDirectory(req);
+    ensureDirectory(archiveDir);
+    const targetPath = path.join(archiveDir, `${Date.now()}-${path.basename(importFile.filename)}`);
+    fs.renameSync(sourcePath, targetPath);
+    const archived = updateImportFile(getDatabase(req), importFile.id, {
+      status: 'archived',
+      fullPath: targetPath,
+      filename: path.relative(getImportsDirectory(req), targetPath),
+      lastError: null
+    });
+
+    recordAdminEvent(req, {
+      action: 'import archive',
+      entityType: 'import',
+      entityId: importFile.id,
+      details: { fileName: archived.filename, status: archived.status }
+    });
+
+    renderImportsPage(req, res, {
+      result: {
+        runId: importFile.id,
+        rowsImported: importFile.rowsImported,
+        rowsSeen: importFile.rowsSeen,
+        policy: 'archive',
+        normalizedFile: archived.filename
+      }
+    });
+  } catch (error) {
+    renderImportsPage(req, res, { importFileId: Number(req.body.importFileId || 0), error: error.message });
   }
 });
 

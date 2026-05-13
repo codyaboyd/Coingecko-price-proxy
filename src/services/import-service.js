@@ -1,5 +1,188 @@
+const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
+
+
+const IMPORT_FILE_STATUSES = new Set(['pending', 'previewed', 'converted', 'imported', 'failed', 'archived']);
+
+function hashFile(filePath) {
+  const hash = crypto.createHash('sha256');
+  const data = fs.readFileSync(filePath);
+  hash.update(data);
+  return hash.digest('hex');
+}
+
+function normalizeImportFileStatus(status) {
+  const normalized = String(status || 'pending').trim().toLowerCase();
+
+  if (!IMPORT_FILE_STATUSES.has(normalized)) {
+    throw new Error(`Import file status must be one of: ${Array.from(IMPORT_FILE_STATUSES).join(', ')}.`);
+  }
+
+  return normalized;
+}
+
+function toImportFile(row) {
+  return {
+    id: row.id,
+    filename: row.filename,
+    fullPath: row.full_path,
+    fileHash: row.file_hash,
+    status: row.status,
+    detectedFormat: row.detected_format,
+    assetId: row.asset_id,
+    interval: row.interval,
+    rowsSeen: row.rows_seen,
+    rowsImported: row.rows_imported,
+    lastError: row.last_error,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at
+  };
+}
+
+function registerImportFile(db, filePath, options = {}) {
+  if (!db) {
+    throw new Error('registerImportFile requires a database connection.');
+  }
+
+  const stats = fs.statSync(filePath);
+
+  if (!stats.isFile()) {
+    throw new Error('Import path must be a regular file.');
+  }
+
+  const now = options.now || Date.now();
+  const fullPath = path.resolve(filePath);
+  const filename = options.filename || path.basename(filePath);
+  const fileHash = options.fileHash || hashFile(filePath);
+
+  db.prepare(`
+    INSERT INTO import_files (
+      filename,
+      full_path,
+      file_hash,
+      status,
+      detected_format,
+      asset_id,
+      interval,
+      rows_seen,
+      rows_imported,
+      last_error,
+      created_at,
+      updated_at
+    ) VALUES (
+      @filename,
+      @fullPath,
+      @fileHash,
+      'pending',
+      NULL,
+      NULL,
+      NULL,
+      0,
+      0,
+      NULL,
+      @now,
+      @now
+    )
+    ON CONFLICT(file_hash) DO NOTHING
+  `).run({ filename, fullPath, fileHash, now });
+
+  return getImportFileByHash(db, fileHash);
+}
+
+function getImportFileByHash(db, fileHash) {
+  const row = db.prepare(`
+    SELECT id, filename, full_path, file_hash, status, detected_format, asset_id, interval,
+           rows_seen, rows_imported, last_error, created_at, updated_at
+    FROM import_files
+    WHERE file_hash = ?
+  `).get(fileHash);
+
+  return row ? toImportFile(row) : null;
+}
+
+function getImportFile(db, id) {
+  const row = db.prepare(`
+    SELECT id, filename, full_path, file_hash, status, detected_format, asset_id, interval,
+           rows_seen, rows_imported, last_error, created_at, updated_at
+    FROM import_files
+    WHERE id = ?
+  `).get(id);
+
+  return row ? toImportFile(row) : null;
+}
+
+function listImportFiles(db, options = {}) {
+  const includeArchived = options.includeArchived === true;
+  const rows = db.prepare(`
+    SELECT id, filename, full_path, file_hash, status, detected_format, asset_id, interval,
+           rows_seen, rows_imported, last_error, created_at, updated_at
+    FROM import_files
+    ${includeArchived ? '' : "WHERE status <> 'archived'"}
+    ORDER BY updated_at DESC, id DESC
+    LIMIT @limit
+  `).all({ limit: options.limit || 100 });
+
+  return rows.map(toImportFile);
+}
+
+function updateImportFile(db, id, patch = {}) {
+  const fields = [];
+  const row = { id, updatedAt: patch.updatedAt || Date.now() };
+
+  if (patch.status !== undefined) {
+    fields.push('status = @status');
+    row.status = normalizeImportFileStatus(patch.status);
+  }
+
+  if (patch.detectedFormat !== undefined) {
+    fields.push('detected_format = @detectedFormat');
+    row.detectedFormat = patch.detectedFormat || null;
+  }
+
+  if (patch.assetId !== undefined) {
+    fields.push('asset_id = @assetId');
+    row.assetId = patch.assetId || null;
+  }
+
+  if (patch.interval !== undefined) {
+    fields.push('interval = @interval');
+    row.interval = patch.interval || null;
+  }
+
+  if (patch.rowsSeen !== undefined) {
+    fields.push('rows_seen = @rowsSeen');
+    row.rowsSeen = patch.rowsSeen || 0;
+  }
+
+  if (patch.rowsImported !== undefined) {
+    fields.push('rows_imported = @rowsImported');
+    row.rowsImported = patch.rowsImported || 0;
+  }
+
+  if (patch.lastError !== undefined) {
+    fields.push('last_error = @lastError');
+    row.lastError = patch.lastError || null;
+  }
+
+  if (patch.fullPath !== undefined) {
+    fields.push('full_path = @fullPath');
+    row.fullPath = patch.fullPath;
+  }
+
+  if (patch.filename !== undefined) {
+    fields.push('filename = @filename');
+    row.filename = patch.filename;
+  }
+
+  if (fields.length === 0) {
+    return getImportFile(db, id);
+  }
+
+  fields.push('updated_at = @updatedAt');
+  db.prepare(`UPDATE import_files SET ${fields.join(', ')} WHERE id = @id`).run(row);
+  return getImportFile(db, id);
+}
 
 const TIMESTAMP_UNITS = new Set(['auto', 'ms', 's']);
 const SUPPORTED_TIMEZONES = new Set(['utc']);
@@ -663,10 +846,17 @@ function previewNormalizedHistoryFile(inputPath, limit = 25) {
 }
 
 module.exports = {
+  IMPORT_FILE_STATUSES,
   convertDumpFile,
   convertDumpText,
+  getImportFile,
+  hashFile,
   importNormalizedHistoryFile,
+  listImportFiles,
+
   parseCsv,
   previewNormalizedHistoryFile,
-  readNormalizedHistoryFile
+  readNormalizedHistoryFile,
+  registerImportFile,
+  updateImportFile
 };

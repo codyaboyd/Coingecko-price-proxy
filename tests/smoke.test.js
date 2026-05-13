@@ -14,7 +14,7 @@ const { getGapReport } = require('../src/services/cache-policy');
 const { getAssetStaleness, STALENESS_RULES } = require('../src/services/staleness-service');
 const { markStuckFetchRunsFailed, runDatabaseIntegrityCheck } = require('../src/services/db-integrity-service');
 const { insertCandles } = require('../src/services/history-service');
-const { convertDumpFile } = require('../src/services/import-service');
+const { convertDumpFile, listImportFiles, registerImportFile, updateImportFile } = require('../src/services/import-service');
 const { validateAssetsFile } = require('../src/services/asset-service');
 const { loadServerConfig } = require('../src/utils/config');
 const { createScheduler } = require('../src/jobs/scheduler');
@@ -106,6 +106,7 @@ test('migrations run on an empty database', (t) => {
   assert.ok(tables.includes('candles'));
   assert.ok(tables.includes('jobs'));
   assert.ok(tables.includes('import_runs'));
+  assert.ok(tables.includes('import_files'));
   assert.ok(tables.includes('config_changes'));
   assert.ok(tables.includes('admin_events'));
   assert.ok(tables.includes('alerts'));
@@ -275,6 +276,39 @@ test('import converter handles a sample CSV fixture', () => {
   assert.equal(output.assetId, 'btc');
   assert.equal(output.candles[0].ts, Date.UTC(2026, 0, 1));
   assert.equal(output.candles[2].close, 44500);
+});
+
+
+test('import inbox registers file hashes once and tracks states', (t) => {
+  const db = seedDatabase(t);
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'chrono-cache-import-inbox-'));
+  const importPath = path.join(tempDir, 'sample.csv');
+
+  t.after(() => fs.rmSync(tempDir, { recursive: true, force: true }));
+
+  fs.writeFileSync(importPath, 'time,close\n2026-01-01,42000\n');
+
+  const first = registerImportFile(db, importPath, { filename: 'sample.csv', now: Date.UTC(2026, 0, 1) });
+  const duplicate = registerImportFile(db, importPath, { filename: 'copy.csv', now: Date.UTC(2026, 0, 2) });
+
+  assert.equal(first.id, duplicate.id);
+  assert.equal(listImportFiles(db).length, 1);
+  assert.equal(first.status, 'pending');
+  assert.equal(first.fileHash.length, 64);
+
+  const imported = updateImportFile(db, first.id, {
+    status: 'imported',
+    detectedFormat: 'csv:columns',
+    assetId: 'btc',
+    interval: '1d',
+    rowsSeen: 1,
+    rowsImported: 1
+  });
+
+  assert.equal(imported.status, 'imported');
+  assert.equal(imported.detectedFormat, 'csv:columns');
+  assert.equal(imported.rowsSeen, 1);
+  assert.equal(imported.rowsImported, 1);
 });
 
 test('gap detector finds missing candles', (t) => {
