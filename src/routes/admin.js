@@ -23,6 +23,7 @@ const { applyMaintenanceModeToRuntime, createMaintenanceError, isMaintenanceMode
 const { assertTimestampRange, DAY_MS, parseDateInput } = require('../utils/date');
 const { parseJsonText, rollbackConfigChange, saveConfigChange } = require('../services/config-change-service');
 const { ADMIN_EVENT_ACTIONS, ADMIN_EVENT_ENTITY_TYPES, adminEventsToCsv, listAdminEventFacetValues, listAdminEvents, recordAdminEvent } = require('../services/admin-activity-service');
+const { createAlertsFromHealthReport, createAlertsFromIntegrityReport, listAlerts, updateAlertStatus } = require('../services/alert-service');
 const logger = require('../utils/logger');
 
 const router = express.Router();
@@ -657,6 +658,46 @@ function validateAdminFetchRange(fromTs, toTs) {
 }
 
 
+
+router.get('/alerts', (req, res, next) => {
+  try {
+    const config = req.app.get('config');
+    const status = ['open', 'acknowledged', 'resolved'].includes(req.query.status) ? req.query.status : null;
+    const alerts = listAlerts(getDatabase(req), { status });
+
+    res.render('admin-alerts', {
+      title: `${config.adminTitle} - Alerts`,
+      appName: config.appName,
+      alerts,
+      selectedStatus: status || 'all',
+      alertAction: req.query.alertAction || null,
+      alertDetails: req.query.alertDetails || null
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.post('/alerts/:id/acknowledge', (req, res, next) => {
+  try {
+    const alert = updateAlertStatus(getDatabase(req), Number(req.params.id), 'acknowledged');
+    recordAdminEvent(req, { action: 'alert acknowledge', entityType: 'alert', entityId: String(req.params.id), details: { type: alert && alert.type } });
+    res.redirect('/admin/alerts?alertAction=acknowledged');
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.post('/alerts/:id/resolve', (req, res, next) => {
+  try {
+    const alert = updateAlertStatus(getDatabase(req), Number(req.params.id), 'resolved');
+    recordAdminEvent(req, { action: 'alert resolve', entityType: 'alert', entityId: String(req.params.id), details: { type: alert && alert.type } });
+    res.redirect('/admin/alerts?alertAction=resolved');
+  } catch (error) {
+    next(error);
+  }
+});
+
 router.get('/doctor', (req, res, next) => {
   try {
     const config = req.app.get('config');
@@ -998,6 +1039,7 @@ router.get('/system-health', (req, res, next) => {
   try {
     const config = req.app.get('config');
     const health = buildSystemHealth(req.app);
+    createAlertsFromHealthReport(getDatabase(req), health);
 
     res.render('admin-system-health', {
       title: `${config.adminTitle} - System Health`,
@@ -1018,6 +1060,10 @@ router.get('/db-integrity', (req, res, next) => {
       ? runDatabaseIntegrityCheck(getDatabase(req))
       : null;
 
+    if (report) {
+      createAlertsFromIntegrityReport(getDatabase(req), report);
+    }
+
     res.render('admin-db-integrity', {
       title: `${config.adminTitle} - Database Integrity`,
       appName: config.appName,
@@ -1032,7 +1078,8 @@ router.get('/db-integrity', (req, res, next) => {
 
 router.post('/db-integrity/run', (req, res, next) => {
   try {
-    runDatabaseIntegrityCheck(getDatabase(req));
+    const report = runDatabaseIntegrityCheck(getDatabase(req));
+    createAlertsFromIntegrityReport(getDatabase(req), report);
     redirectWithDbIntegrityAction(res, 'checked', 'Database integrity check completed.');
   } catch (error) {
     next(error);

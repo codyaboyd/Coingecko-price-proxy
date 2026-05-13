@@ -179,6 +179,32 @@ const MIGRATIONS = [
       CREATE INDEX IF NOT EXISTS idx_admin_events_entity_created
         ON admin_events(entity_type, created_at DESC, id DESC);
     `
+
+  },
+  {
+    version: 8,
+    name: 'add_alerts_table',
+    up: `
+      CREATE TABLE IF NOT EXISTS alerts (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        severity TEXT NOT NULL,
+        type TEXT NOT NULL,
+        title TEXT NOT NULL,
+        message TEXT NOT NULL,
+        entity_type TEXT,
+        entity_id TEXT,
+        status TEXT NOT NULL CHECK (status IN ('open', 'acknowledged', 'resolved')),
+        created_at INTEGER NOT NULL,
+        acknowledged_at INTEGER
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_alerts_status_created
+        ON alerts(status, created_at DESC, id DESC);
+
+      CREATE INDEX IF NOT EXISTS idx_alerts_type_entity_status
+        ON alerts(type, entity_type, entity_id, status);
+    `
+
   }
 ];
 

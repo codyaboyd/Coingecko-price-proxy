@@ -10,6 +10,7 @@ const { errorHandler, notFoundHandler } = require('./middleware/error-handlers')
 const { requireAdminSession } = require('./middleware/auth');
 const { requestLogger } = require('./middleware/request-logger');
 const { createRateLimit } = require('./middleware/rate-limit');
+const { countOpenAlerts } = require('./services/alert-service');
 
 function createApp(config) {
   const app = express();
@@ -22,6 +23,7 @@ function createApp(config) {
     const runtimeConfig = req.app.get('config') || {};
     res.locals.maintenanceMode = runtimeConfig.maintenanceMode === true;
     res.locals.maintenanceBannerMessage = 'Maintenance mode is active. Public history uses local cache only; fetch jobs and imports are paused.';
+    res.locals.openAlertCount = countOpenAlerts(req.app.get('db'));
     next();
   });
 

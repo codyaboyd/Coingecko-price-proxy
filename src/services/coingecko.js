@@ -2,6 +2,7 @@ const logger = require('../utils/logger');
 const { createProxyAwareFetch } = require('../utils/proxy-fetch');
 const { getGlobalLimiter, sleep } = require('../utils/limiter');
 const { getGlobalRateBudgetService } = require('./rate-budget-service');
+const { createGlobalAlert } = require('./alert-service');
 
 const DEFAULT_API_BASE = 'https://api.coingecko.com/api/v3';
 const DEFAULT_TIMEOUT_MS = 15 * 1000;
@@ -204,6 +205,14 @@ function createCoinGeckoClient(options = {}) {
         if (response.status === 429) {
           const pauseMs = Math.max(rateLimitPauseMs, retryAfterMs || 0);
           logger.warn(`CoinGecko rate limit hit; pausing queue for ${pauseMs}ms before retrying.`);
+          createGlobalAlert({
+            severity: 'warning',
+            type: 'repeated_coingecko_429',
+            title: 'Repeated CoinGecko 429 responses',
+            message: `CoinGecko returned HTTP 429; local queue paused for ${pauseMs}ms.`,
+            entityType: 'external_api',
+            entityId: 'coingecko'
+          });
           limiter.pause(pauseMs);
 
           if (rateBudget && rateBudget.safeMode) {
