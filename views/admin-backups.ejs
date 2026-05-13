@@ -34,6 +34,7 @@
           <form method="post" action="/admin/backups/create">
             <button type="submit" class="btn btn-primary">Create backup now</button>
           </form>
+          <a class="btn btn-outline-danger" href="/admin/backups/restore">Restore backup</a>
           <form method="post" action="/admin/backups/prune">
             <button type="submit" class="btn btn-outline-secondary">Prune backups</button>
           </form>
@@ -109,6 +110,7 @@
                   </td>
                   <td class="text-end">
                     <a class="btn btn-sm btn-outline-primary" href="/admin/backups/download/<%= encodeURIComponent(backup.fileName) %>">Download</a>
+                    <a class="btn btn-sm btn-outline-danger" href="/admin/backups/restore?file=<%= encodeURIComponent(backup.fileName) %>">Restore</a>
                     <form class="d-inline" method="post" action="/admin/backups/<%= encodeURIComponent(backup.id) %>/delete" onsubmit="return confirm('Delete backup <%= backup.fileName %> and its manifest/config copies?');">
                       <button type="submit" class="btn btn-sm btn-outline-danger">Delete</button>
                     </form>

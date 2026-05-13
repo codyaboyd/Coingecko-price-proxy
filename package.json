@@ -25,7 +25,8 @@
     "smoke": "node --test tests/smoke.test.js",
     "self-check": "node scripts/self-check.js",
     "backups:list": "node scripts/cli.js backups:list",
-    "backups:prune": "node scripts/cli.js backups:prune"
+    "backups:prune": "node scripts/cli.js backups:prune",
+    "restore": "node scripts/restore-backup.js"
   },
   "keywords": [
     "cache",
