@@ -117,7 +117,7 @@ function enqueueBackfill(db, scheduler, assetId, body = {}, options = {}) {
     throw createValidationError('too_many_backfill_chunks', `Backfill would enqueue ${chunks.length} jobs; narrow the range or use a coarser interval.`);
   }
 
-  const enqueuedJobs = chunks.map((chunk) => scheduler.enqueue('historical_backfill', {
+  const jobPayloads = chunks.map((chunk) => ({
     assetId: asset.id,
     from: new Date(chunk.from).toISOString(),
     to: new Date(chunk.to + INTERVAL_STEPS_MS[request.interval]).toISOString(),
@@ -127,6 +127,7 @@ function enqueueBackfill(db, scheduler, assetId, body = {}, options = {}) {
     missingFrom: chunk.from,
     missingTo: chunk.to
   }));
+  const enqueuedJobs = options.dryRun ? [] : jobPayloads.map((payload) => scheduler.enqueue('historical_backfill', payload));
 
   return {
     asset,
@@ -140,6 +141,9 @@ function enqueueBackfill(db, scheduler, assetId, body = {}, options = {}) {
     },
     gaps,
     chunks,
+    projectedCalls: jobPayloads.length,
+    jobPayloads,
+    dryRun: options.dryRun === true,
     enqueuedJobs
   };
 }
