@@ -59,6 +59,7 @@ function start() {
   app.set('hotReloadManager', hotReloadManager);
   recentRefreshScheduler.start();
   jobScheduler.startDailyBackupJob();
+  jobScheduler.process();
   hotReloadManager.reloadAssetsConfig();
   hotReloadManager.start();
 

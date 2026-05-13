@@ -28,7 +28,10 @@
     "backups:prune": "node scripts/cli.js backups:prune",
     "restore": "node scripts/restore-backup.js",
     "maintenance:on": "node scripts/cli.js maintenance:on",
-    "maintenance:off": "node scripts/cli.js maintenance:off"
+    "maintenance:off": "node scripts/cli.js maintenance:off",
+    "jobs:list": "node scripts/cli.js jobs:list",
+    "jobs:retry-failed": "node scripts/cli.js jobs:retry-failed",
+    "jobs:clear-completed": "node scripts/cli.js jobs:clear-completed"
   },
   "keywords": [
     "cache",

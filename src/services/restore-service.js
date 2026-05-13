@@ -260,6 +260,7 @@ function restartAppState(app, config) {
 
   recentRefreshScheduler.start();
   jobScheduler.startDailyBackupJob();
+  jobScheduler.process();
 
   return { db, assets, jobScheduler, recentRefreshScheduler };
 }

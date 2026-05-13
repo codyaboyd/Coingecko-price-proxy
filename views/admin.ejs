@@ -112,6 +112,98 @@
       <div class="card shadow-sm mb-4">
         <div class="card-header bg-white d-flex align-items-center justify-content-between flex-wrap gap-2">
           <div>
+            <h2 class="h5 mb-1">Durable job queue</h2>
+            <p class="text-secondary small mb-0">Jobs are persisted in SQLite and recovered across restarts.</p>
+          </div>
+          <span class="badge text-bg-secondary"><%= queue.queuedJobs.length %> queued · <%= queue.runningJobs.length %> running · <%= queue.failedJobs.length %> failed</span>
+        </div>
+        <div class="card-body">
+          <h3 class="h6">Queued jobs</h3>
+          <% if (queue.queuedJobs.length === 0) { %>
+            <p class="text-secondary small">No queued jobs.</p>
+          <% } else { %>
+            <div class="table-responsive mb-3">
+              <table class="table table-sm align-middle">
+                <thead><tr><th>ID</th><th>Type</th><th>Asset</th><th>Attempts</th><th>Run after</th><th>Action</th></tr></thead>
+                <tbody>
+                  <% queue.queuedJobs.forEach((job) => { %>
+                    <tr>
+                      <td><code>#<%= job.id %></code></td>
+                      <td><%= job.type %> <span class="badge text-bg-light"><%= job.status %></span></td>
+                      <td><%= job.payload.assetId || 'n/a' %></td>
+                      <td><%= job.attempts %>/<%= job.maxAttempts %></td>
+                      <td><%= job.runAfter ? new Date(job.runAfter).toISOString() : 'now' %></td>
+                      <td>
+                        <form method="post" action="/admin/jobs/<%= job.id %>/cancel" class="m-0">
+                          <button type="submit" class="btn btn-outline-danger btn-sm">Cancel</button>
+                        </form>
+                      </td>
+                    </tr>
+                  <% }) %>
+                </tbody>
+              </table>
+            </div>
+          <% } %>
+
+          <h3 class="h6">Running job</h3>
+          <% if (queue.runningJobs.length === 0) { %>
+            <p class="text-secondary small">No running job.</p>
+          <% } else { %>
+            <div class="table-responsive mb-3">
+              <table class="table table-sm align-middle">
+                <thead><tr><th>ID</th><th>Type</th><th>Asset</th><th>Attempts</th><th>Locked at</th><th>Action</th></tr></thead>
+                <tbody>
+                  <% queue.runningJobs.forEach((job) => { %>
+                    <tr>
+                      <td><code>#<%= job.id %></code></td>
+                      <td><%= job.type %></td>
+                      <td><%= job.payload.assetId || 'n/a' %></td>
+                      <td><%= job.attempts %>/<%= job.maxAttempts %></td>
+                      <td><%= job.lockedAt ? new Date(job.lockedAt).toISOString() : '—' %></td>
+                      <td>
+                        <form method="post" action="/admin/jobs/<%= job.id %>/cancel" class="m-0">
+                          <button type="submit" class="btn btn-outline-danger btn-sm">Cancel</button>
+                        </form>
+                      </td>
+                    </tr>
+                  <% }) %>
+                </tbody>
+              </table>
+            </div>
+          <% } %>
+
+          <h3 class="h6">Failed jobs</h3>
+          <% if (queue.failedJobs.length === 0) { %>
+            <p class="text-secondary small mb-0">No failed jobs.</p>
+          <% } else { %>
+            <div class="table-responsive">
+              <table class="table table-sm align-middle">
+                <thead><tr><th>ID</th><th>Type</th><th>Asset</th><th>Attempts</th><th>Error</th><th>Action</th></tr></thead>
+                <tbody>
+                  <% queue.failedJobs.forEach((job) => { %>
+                    <tr>
+                      <td><code>#<%= job.id %></code></td>
+                      <td><%= job.type %></td>
+                      <td><%= job.payload.assetId || 'n/a' %></td>
+                      <td><%= job.attempts %>/<%= job.maxAttempts %></td>
+                      <td class="text-break"><%= job.lastError || 'Unknown error' %></td>
+                      <td>
+                        <form method="post" action="/admin/jobs/<%= job.id %>/retry" class="m-0">
+                          <button type="submit" class="btn btn-outline-primary btn-sm">Retry</button>
+                        </form>
+                      </td>
+                    </tr>
+                  <% }) %>
+                </tbody>
+              </table>
+            </div>
+          <% } %>
+        </div>
+      </div>
+
+      <div class="card shadow-sm mb-4">
+        <div class="card-header bg-white d-flex align-items-center justify-content-between flex-wrap gap-2">
+          <div>
             <h2 class="h5 mb-1">Recent refresh scheduler</h2>
             <p class="text-secondary small mb-0">In-memory automatic refresh for enabled assets only.</p>
           </div>

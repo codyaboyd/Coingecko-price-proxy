@@ -103,6 +103,36 @@ const MIGRATIONS = [
       ALTER TABLE import_runs ADD COLUMN rows_seen INTEGER NOT NULL DEFAULT 0;
       ALTER TABLE import_runs ADD COLUMN error TEXT;
     `
+  },
+  {
+    version: 5,
+    name: 'add_durable_jobs_queue',
+    up: `
+      CREATE TABLE IF NOT EXISTS jobs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        type TEXT NOT NULL,
+        payload_json TEXT NOT NULL DEFAULT '{}',
+        priority INTEGER NOT NULL DEFAULT 100,
+        status TEXT NOT NULL CHECK (status IN ('queued', 'running', 'completed', 'failed', 'cancelled', 'delayed')),
+        attempts INTEGER NOT NULL DEFAULT 0,
+        max_attempts INTEGER NOT NULL DEFAULT 3,
+        run_after INTEGER NOT NULL,
+        locked_at INTEGER,
+        locked_by TEXT,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL,
+        last_error TEXT
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_jobs_runnable
+        ON jobs(status, run_after, priority, id);
+
+      CREATE INDEX IF NOT EXISTS idx_jobs_locked
+        ON jobs(status, locked_at);
+
+      CREATE INDEX IF NOT EXISTS idx_jobs_updated
+        ON jobs(status, updated_at);
+    `
   }
 ];
 
