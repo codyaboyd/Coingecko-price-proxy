@@ -6,6 +6,7 @@ const { validateAssetsFile } = require('./asset-service');
 const { resolveFromRoot } = require('../utils/files');
 const { resolveDatabasePath } = require('../db/node-sqlite');
 const packageJson = require('../../package.json');
+const { buildRuntimeCompatibility } = require('../../scripts/check-runtime');
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const STALE_GRACE_MULTIPLIER = 2;
@@ -230,6 +231,13 @@ function buildSystemHealth(app, options = {}) {
   const runtime = getRuntime();
   checks.push(check('runtime', 'Runtime', runtime.name === 'node' || runtime.name === 'bun' ? 'ok' : 'warning', `${runtime.name} ${runtime.version}`, runtime.name, runtime));
   checks.push(check('app_version', 'App version', packageJson.version ? 'ok' : 'warning', packageJson.version || 'Unknown', packageJson.version || null));
+
+  try {
+    const compatibility = buildRuntimeCompatibility({ projectRoot: process.cwd() });
+    checks.push(check('runtime_compatibility', 'Runtime compatibility', compatibility.status, `${compatibility.summary.warning} warning(s), ${compatibility.summary.critical} critical`, compatibility.status, compatibility));
+  } catch (error) {
+    checks.push(criticalCheck('runtime_compatibility', 'Runtime compatibility', error.message));
+  }
 
   const startupSelfCheck = app.get('startupSelfCheck');
   if (startupSelfCheck && Array.isArray(startupSelfCheck.checks)) {
