@@ -63,7 +63,13 @@ logs/
    npm run validate-assets
    ```
 
-6. Run the smoke test suite:
+6. Check runtime compatibility:
+
+   ```bash
+   npm run check-runtime
+   ```
+
+7. Run the smoke test suite:
 
    ```bash
    npm test
@@ -168,6 +174,7 @@ The suite checks that configuration loads, migrations apply, assets validate, fa
 - `npm run dev` - run the server with `nodemon`.
 - `npm run migrate` - run `node scripts/cli.js migrate` to apply pending SQLite migrations.
 - `npm run validate-assets` - run `node scripts/cli.js validate-assets` to validate `config/assets.json`.
+- `npm run check-runtime` - run `node scripts/check-runtime.js` to verify Node.js, optional Bun, npm, GNU screen, `better-sqlite3`, required package scripts, required directories, `package-lock.json`, and `node_modules` without upgrading dependencies.
 - `npm test` - run Node's built-in test runner against the practical smoke suite in `tests/smoke.test.js`.
 - `npm run smoke` - alias for the same practical smoke checks used by `npm test`.
 - `npm run backup-db` - run `node scripts/cli.js backup-db` to create a SQLite backup under `data/backups`.
@@ -228,6 +235,28 @@ Restore on the new server:
    ```
 
 The admin dashboard also has a **Create portable bundle** button in the Migration card. It creates the same archive under `data/exports/` without exporting `.env` unless the running server process was started with `EXPORT_ENV=1`.
+
+## Safe update process
+
+Use this process when refreshing the app or changing dependencies. The runtime compatibility check is diagnostic only; it does not auto-upgrade packages or rewrite dependency versions.
+
+1. Create or verify a recent backup before changing the runtime or package tree:
+
+   ```bash
+   npm run backup-db
+   ```
+
+2. Inspect the current maintenance baseline:
+
+   ```bash
+   npm run check-runtime
+   npm run self-check
+   npm test
+   ```
+
+3. Review dependency changes before installing them. Prefer `npm ci` on deployed systems when `package-lock.json` is present so installs match the lockfile exactly. Use `npm install` only when intentionally updating the lockfile.
+4. Do not auto-upgrade dependencies in production. Make version bumps in a controlled change, review `package.json` and `package-lock.json`, then run the compatibility check and smoke tests again.
+5. Restart the managed process and verify the admin **System Health** page, including the **Runtime Compatibility** section.
 
 ## Maintenance CLI
 

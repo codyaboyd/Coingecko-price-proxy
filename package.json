@@ -33,7 +33,8 @@
     "jobs:retry-failed": "node scripts/cli.js jobs:retry-failed",
     "jobs:clear-completed": "node scripts/cli.js jobs:clear-completed",
     "db:check": "node scripts/cli.js db:check",
-    "bundle": "node scripts/create-portable-bundle.js"
+    "bundle": "node scripts/create-portable-bundle.js",
+    "check-runtime": "node scripts/check-runtime.js"
   },
   "keywords": [
     "cache",
