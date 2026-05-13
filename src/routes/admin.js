@@ -16,6 +16,7 @@ const { fetchMarketChartRange } = require('../services/coingecko');
 const { getGapReport } = require('../services/cache-policy');
 const { buildSystemHealth, bytesToSummary } = require('../services/system-health');
 const { getAssetStaleness } = require('../services/staleness-service');
+const { applyMaintenanceModeToRuntime, createMaintenanceError, isMaintenanceMode, setMaintenanceMode } = require('../services/maintenance-service');
 const { assertTimestampRange, DAY_MS, parseDateInput } = require('../utils/date');
 const logger = require('../utils/logger');
 
@@ -23,6 +24,16 @@ const router = express.Router();
 const MAX_IMPORT_FILE_BYTES = 50 * 1024 * 1024;
 const MAX_ADMIN_FETCH_RANGE_MS = 366 * DAY_MS;
 
+
+function isRequestInMaintenanceMode(req) {
+  return isMaintenanceMode(req.app.get('config'));
+}
+
+function requireMaintenanceDisabled(req, message) {
+  if (isRequestInMaintenanceMode(req)) {
+    throw createMaintenanceError(message);
+  }
+}
 
 function getHotReloadManager(req) {
   return req.app.get('hotReloadManager') || null;
@@ -275,7 +286,8 @@ function getRecentRefreshScheduler(req) {
     scheduler = createRecentRefreshScheduler({
       db: getDatabase(req),
       jobScheduler: getScheduler(req),
-      assets: getConfiguredAssets(req)
+      assets: getConfiguredAssets(req),
+      maintenanceMode: isRequestInMaintenanceMode(req)
     });
     scheduler.start();
     req.app.set('recentRefreshScheduler', scheduler);
@@ -524,6 +536,7 @@ router.get('/imports', (req, res, next) => {
 
 router.post('/imports/run', (req, res, next) => {
   try {
+    requireMaintenanceDisabled(req, 'Maintenance mode is active; imports are paused.');
     const fileName = req.body.file;
     const assetId = req.body.assetId;
     const interval = Array.from(SUPPORTED_INTERVALS).includes(req.body.interval) ? req.body.interval : '1d';
@@ -831,6 +844,7 @@ router.post('/assets/:id/edit', (req, res, next) => {
 
 router.post('/assets/:id/test/coingecko', async (req, res, next) => {
   try {
+    requireMaintenanceDisabled(req, 'Maintenance mode is active; CoinGecko test fetches are paused.');
     const asset = findConfiguredAsset(req, req.params.id);
 
     if (!asset) {
@@ -914,6 +928,7 @@ router.get('/assets/:id/test/gap-report', (req, res, next) => {
 
 router.post('/assets/:id/test/fetch-recent', (req, res, next) => {
   try {
+    requireMaintenanceDisabled(req, 'Maintenance mode is active; CoinGecko fetch jobs are paused.');
     const asset = findConfiguredAsset(req, req.params.id);
 
     if (!asset) {
@@ -1009,6 +1024,7 @@ router.post('/scheduler/resume', (req, res, next) => {
 
 router.post('/scheduler/repair-stale', (req, res, next) => {
   try {
+    requireMaintenanceDisabled(req, 'Maintenance mode is active; repair jobs are paused.');
     const result = getRecentRefreshScheduler(req).runNow();
     redirectWithSchedulerAction(res, 'repair-stale', `${result.jobCount} repair job(s) queued`);
   } catch (error) {
@@ -1018,8 +1034,25 @@ router.post('/scheduler/repair-stale', (req, res, next) => {
 
 router.post('/scheduler/run-now', (req, res, next) => {
   try {
+    requireMaintenanceDisabled(req, 'Maintenance mode is active; refresh jobs are paused.');
     const result = getRecentRefreshScheduler(req).runNow();
     redirectWithSchedulerAction(res, 'run-now', `${result.jobCount} job(s) queued`);
+  } catch (error) {
+    next(error);
+  }
+});
+
+
+router.post('/maintenance', (req, res, next) => {
+  try {
+    const enable = req.body.mode === 'on' || req.body.maintenanceMode === 'true';
+    const result = setMaintenanceMode(enable, { config: req.app.get('config') });
+    applyMaintenanceModeToRuntime(req.app, result.maintenanceMode);
+    redirectWithSchedulerAction(
+      res,
+      result.maintenanceMode ? 'maintenance-on' : 'maintenance-off',
+      `Maintenance mode ${result.maintenanceMode ? 'enabled' : 'disabled'} in ${path.relative(process.cwd(), result.configPath)}`
+    );
   } catch (error) {
     next(error);
   }
@@ -1067,7 +1100,8 @@ router.get('/', (req, res, next) => {
         runtime: `Node.js ${process.version} (${config.nodeEnv})`,
         assetsLoaded: assets.length,
         configPath: resolveFromRoot(config.assetsConfigPath),
-        databasePath: resolveFromRoot(config.databasePath)
+        databasePath: resolveFromRoot(config.databasePath),
+        maintenanceMode: config.maintenanceMode === true
       }
     });
   } catch (error) {

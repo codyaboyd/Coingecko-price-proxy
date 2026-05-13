@@ -222,6 +222,8 @@ class RecentRefreshScheduler {
       .sort((left, right) => left.priority - right.priority || left.symbol.localeCompare(right.symbol));
     this.assetStates = new Map();
     this.paused = false;
+    this.pauseReason = null;
+    this.maintenanceMode = Boolean(options.maintenanceMode);
     this.timer = null;
     this.startedAt = null;
     this.lastRunAt = null;
@@ -304,7 +306,7 @@ class RecentRefreshScheduler {
   scheduleNext(delayMs) {
     this.stopTimer();
 
-    if (this.paused || this.startedAt === null) {
+    if (this.maintenanceMode || this.paused || this.startedAt === null) {
       this.nextRunAt = null;
       return;
     }
@@ -327,7 +329,7 @@ class RecentRefreshScheduler {
   }
 
   scheduleFromStates() {
-    if (this.paused || this.startedAt === null) {
+    if (this.maintenanceMode || this.paused || this.startedAt === null) {
       this.nextRunAt = null;
       return;
     }
@@ -358,8 +360,24 @@ class RecentRefreshScheduler {
     return nextDue;
   }
 
+  setMaintenanceMode(enabled) {
+    this.maintenanceMode = Boolean(enabled);
+    this.pauseReason = this.maintenanceMode ? 'maintenance' : (this.paused ? 'manual' : null);
+
+    if (this.maintenanceMode) {
+      this.stopTimer();
+      this.nextRunAt = null;
+    } else {
+      this.scheduleFromStates();
+    }
+
+    logger.info(`Recent refresh scheduler ${this.maintenanceMode ? 'paused for maintenance' : 'left maintenance mode'}.`);
+    return this.getStatus();
+  }
+
   pause() {
     this.paused = true;
+    this.pauseReason = 'manual';
     this.stopTimer();
     this.nextRunAt = null;
     logger.info('Recent refresh scheduler paused.');
@@ -368,6 +386,7 @@ class RecentRefreshScheduler {
 
   resume() {
     this.paused = false;
+    this.pauseReason = this.maintenanceMode ? 'maintenance' : null;
     this.scheduleFromStates();
     logger.info('Recent refresh scheduler resumed.');
     return this.getStatus();
@@ -429,6 +448,12 @@ class RecentRefreshScheduler {
   }
 
   async runDue() {
+    if (this.maintenanceMode) {
+      logger.info('Recent refresh scheduler is paused due to maintenance mode.');
+      this.scheduleFromStates();
+      return this.getStatus();
+    }
+
     const now = Date.now();
     const work = this.getDueWork(now);
 
@@ -445,6 +470,13 @@ class RecentRefreshScheduler {
   }
 
   runNow() {
+    if (this.maintenanceMode) {
+      const error = new Error('Maintenance mode is active; recent refresh jobs are paused.');
+      error.status = 503;
+      error.code = 'maintenance_mode';
+      throw error;
+    }
+
     const now = Date.now();
     const work = [];
 
@@ -470,7 +502,9 @@ class RecentRefreshScheduler {
   getStatus() {
     return {
       enabled: this.startedAt !== null,
-      paused: this.paused,
+      paused: this.paused || this.maintenanceMode,
+      pauseReason: this.maintenanceMode ? 'maintenance' : this.pauseReason,
+      maintenanceMode: this.maintenanceMode,
       startedAt: this.startedAt,
       lastRunAt: this.lastRunAt,
       nextRunAt: this.nextRunAt,

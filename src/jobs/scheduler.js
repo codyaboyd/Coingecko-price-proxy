@@ -59,6 +59,7 @@ class JobScheduler {
     this.running = false;
     this.limiter = options.limiter || getGlobalLimiter();
     this.config = options.config || null;
+    this.maintenanceMode = Boolean(this.config && this.config.maintenanceMode);
     this.backupService = options.backupService || (this.config ? createBackupService({ db: this.db, config: this.config }) : null);
     this.backupTimer = null;
     this.nextBackupAt = null;
@@ -142,9 +143,26 @@ class JobScheduler {
     this.handlers.set(type, handler);
   }
 
+  setMaintenanceMode(enabled) {
+    this.maintenanceMode = Boolean(enabled);
+
+    if (!this.maintenanceMode) {
+      this.process();
+    }
+
+    return this.getStatus();
+  }
+
   enqueue(type, payload = {}, options = {}) {
     if (!JOB_TYPES.has(type)) {
       throw new Error(`Unsupported job type: ${type}`);
+    }
+
+    if (this.maintenanceMode && FETCH_JOB_TYPES.has(type)) {
+      const error = new Error('Maintenance mode is active; CoinGecko fetch jobs are paused.');
+      error.status = 503;
+      error.code = 'maintenance_mode';
+      throw error;
     }
 
     const job = {
@@ -199,6 +217,12 @@ class JobScheduler {
     return before - this.queue.length;
   }
 
+  hasRunnableQueuedJob() {
+    return this.maintenanceMode
+      ? this.queue.some((job) => !FETCH_JOB_TYPES.has(job.type))
+      : this.queue.length > 0;
+  }
+
   process() {
     if (this.running) {
       return;
@@ -211,13 +235,21 @@ class JobScheduler {
   async drain() {
     try {
       while (this.queue.length > 0 && this.activeJobs.size < this.concurrency) {
-        const job = this.queue.shift();
+        const nextRunnableIndex = this.maintenanceMode
+          ? this.queue.findIndex((queuedJob) => !FETCH_JOB_TYPES.has(queuedJob.type))
+          : 0;
+
+        if (nextRunnableIndex === -1) {
+          break;
+        }
+
+        const [job] = this.queue.splice(nextRunnableIndex, 1);
         this.runJob(job);
       }
     } finally {
       this.running = false;
 
-      if (this.queue.length > 0 && this.activeJobs.size < this.concurrency) {
+      if (this.hasRunnableQueuedJob() && this.activeJobs.size < this.concurrency) {
         this.process();
       }
     }
@@ -276,7 +308,8 @@ class JobScheduler {
       recentFailures: this.recentFailures.map(cloneJob),
       callsUsedThisMinute: limiterStatus.callsUsedThisMinute,
       limiter: limiterStatus,
-      nextBackupAt: this.nextBackupAt
+      nextBackupAt: this.nextBackupAt,
+      maintenanceMode: this.maintenanceMode
     };
   }
 }
