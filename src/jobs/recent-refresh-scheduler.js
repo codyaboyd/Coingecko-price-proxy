@@ -271,7 +271,7 @@ class RecentRefreshScheduler {
       ));
 
       if (removedJobs > 0) {
-        logger.info(`Removed ${removedJobs} queued recent refresh job(s) for disabled or removed asset(s).`);
+        logger.jobInfo(`Removed ${removedJobs} queued recent refresh job(s) for disabled or removed asset(s).`);
       }
     }
 
@@ -279,7 +279,7 @@ class RecentRefreshScheduler {
       this.scheduleNext(0);
     }
 
-    logger.info(`Recent refresh scheduler reloaded for ${this.assetStates.size} enabled asset(s).`);
+    logger.jobInfo(`Recent refresh scheduler reloaded for ${this.assetStates.size} enabled asset(s).`);
     return this.getStatus();
   }
 
@@ -293,7 +293,7 @@ class RecentRefreshScheduler {
     this.assetStates = new Map(this.assets.map((asset) => [asset.id, this.buildAssetState(asset, now)]));
     this.scheduleNext(0);
 
-    logger.info(`Recent refresh scheduler started for ${this.assetStates.size} enabled asset(s).`);
+    logger.jobInfo(`Recent refresh scheduler started for ${this.assetStates.size} enabled asset(s).`);
     return this.getStatus();
   }
 
@@ -319,7 +319,7 @@ class RecentRefreshScheduler {
       this.timer = null;
       this.runDue().catch((error) => {
         this.lastError = error.message;
-        logger.error(`Recent refresh scheduler failed: ${error.message}`);
+        logger.jobError(`Recent refresh scheduler failed: ${error.message}`);
         createAlert(this.db, {
           severity: 'critical',
           type: 'scheduler_stopped_unexpectedly',
@@ -380,7 +380,7 @@ class RecentRefreshScheduler {
       this.scheduleFromStates();
     }
 
-    logger.info(`Recent refresh scheduler ${this.maintenanceMode ? 'paused for maintenance' : 'left maintenance mode'}.`);
+    logger.jobInfo(`Recent refresh scheduler ${this.maintenanceMode ? 'paused for maintenance' : 'left maintenance mode'}.`);
     return this.getStatus();
   }
 
@@ -389,7 +389,7 @@ class RecentRefreshScheduler {
     this.pauseReason = 'manual';
     this.stopTimer();
     this.nextRunAt = null;
-    logger.info('Recent refresh scheduler paused.');
+    logger.jobInfo('Recent refresh scheduler paused.');
     return this.getStatus();
   }
 
@@ -397,7 +397,7 @@ class RecentRefreshScheduler {
     this.paused = false;
     this.pauseReason = this.maintenanceMode ? 'maintenance' : null;
     this.scheduleFromStates();
-    logger.info('Recent refresh scheduler resumed.');
+    logger.jobInfo('Recent refresh scheduler resumed.');
     return this.getStatus();
   }
 
@@ -458,7 +458,7 @@ class RecentRefreshScheduler {
 
   async runDue() {
     if (this.maintenanceMode) {
-      logger.info('Recent refresh scheduler is paused due to maintenance mode.');
+      logger.jobInfo('Recent refresh scheduler is paused due to maintenance mode.');
       this.scheduleFromStates();
       return this.getStatus();
     }
@@ -471,7 +471,7 @@ class RecentRefreshScheduler {
       this.lastRunAt = now;
       this.runCount += 1;
       this.lastError = null;
-      logger.info(`Recent refresh scheduler enqueued ${jobCount} job(s).`);
+      logger.jobInfo(`Recent refresh scheduler enqueued ${jobCount} job(s).`);
     }
 
     this.scheduleFromStates();
@@ -500,7 +500,7 @@ class RecentRefreshScheduler {
     this.runCount += 1;
     this.lastError = null;
     this.scheduleFromStates();
-    logger.info(`Recent refresh run-now enqueued ${jobCount} job(s).`);
+    logger.jobInfo(`Recent refresh run-now enqueued ${jobCount} job(s).`);
 
     return {
       jobCount,
