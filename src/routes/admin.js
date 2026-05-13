@@ -11,6 +11,7 @@ const { createScheduler } = require('../jobs/scheduler');
 const { buildRecentRefreshJobs, createRecentRefreshScheduler, normalizeFetchPolicy } = require('../jobs/recent-refresh-scheduler');
 const { clearApiCache, getApiCacheStats } = require('../services/api-cache');
 const { createBackupService } = require('../services/backup-service');
+const { RESTORE_CONFIRMATION_PHRASE, restoreBackup } = require('../services/restore-service');
 const { fetchMarketChartRange } = require('../services/coingecko');
 const { getGapReport } = require('../services/cache-policy');
 const { buildSystemHealth, bytesToSummary } = require('../services/system-health');
@@ -308,14 +309,22 @@ function getBackupService(req) {
   return scheduler.backupService;
 }
 
-function redirectWithBackupAction(res, action, details) {
+function buildBackupActionParams(action, details) {
   const params = new URLSearchParams({ backupAction: action });
 
   if (details) {
     params.set('backupDetails', details);
   }
 
-  res.redirect(`/admin/backups?${params.toString()}`);
+  return params;
+}
+
+function redirectWithBackupAction(res, action, details) {
+  res.redirect(`/admin/backups?${buildBackupActionParams(action, details).toString()}`);
+}
+
+function redirectWithRestoreAction(res, action, details) {
+  res.redirect(`/admin/backups/restore?${buildBackupActionParams(action, details).toString()}`);
 }
 
 function formatBackupForView(backup) {
@@ -610,6 +619,48 @@ router.post('/backups/prune', (req, res, next) => {
     redirectWithBackupAction(res, 'pruned', `${result.pruned} backup(s), ${result.deletedFiles} file(s) deleted`);
   } catch (error) {
     next(error);
+  }
+});
+
+
+router.get('/backups/restore', (req, res, next) => {
+  try {
+    const config = req.app.get('config');
+    const backupService = getBackupService(req);
+    const backups = backupService.listBackups().map(formatBackupForView);
+    const selected = backups.find((backup) => backup.fileName === req.query.file) || backups[0] || null;
+
+    res.render('admin-backup-restore', {
+      title: `${config.adminTitle} - Restore Backup`,
+      appName: config.appName,
+      backups,
+      selectedFile: req.query.file || (selected && selected.fileName) || '',
+      confirmationPhrase: RESTORE_CONFIRMATION_PHRASE,
+      backupAction: req.query.backupAction || null,
+      backupDetails: req.query.backupDetails || null
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.post('/backups/restore', async (req, res, next) => {
+  try {
+    const config = req.app.get('config');
+    const backupService = getBackupService(req);
+    const backup = backupService.resolveBackupFile(req.body.backupFile);
+    const result = await restoreBackup(config, {
+      app: req.app,
+      db: getDatabase(req),
+      backupPath: backup,
+      confirmation: req.body.confirmation,
+      actor: req.adminUser && req.adminUser.username ? req.adminUser.username : 'admin-ui'
+    });
+
+    redirectWithRestoreAction(res, 'restored', `${result.backupFileName}; emergency backup: ${result.emergencyBackupPath ? path.relative(process.cwd(), result.emergencyBackupPath) : 'none'}`);
+  } catch (error) {
+    logger.error(`Admin backup restore failed: ${error.message}`);
+    redirectWithRestoreAction(res, 'restore failed', error.message);
   }
 });
 

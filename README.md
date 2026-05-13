@@ -168,6 +168,7 @@ The suite checks that configuration loads, migrations apply, assets validate, fa
 - `npm run import` - placeholder for future import tooling.
 - `npm run convert` - placeholder for future conversion tooling.
 - `npm run backup` - alias for `npm run backup-db`.
+- `npm run restore -- ./data/backups/history-YYYY-MM-DD-HH-mm-ss.sqlite` - safely restore a backup from `data/backups`.
 
 ## Maintenance CLI
 
@@ -193,12 +194,25 @@ npm run validate-assets
 
 ### `backup-db`
 
-Create a SQLite database backup at `data/backups/history-YYYYMMDD-HHMMSS.sqlite`. The backup command uses SQLite's backup API so it can safely copy the configured database even when WAL mode is enabled.
+Create a SQLite database backup at `data/backups/history-YYYY-MM-DD-HH-mm-ss.sqlite`. The backup command uses SQLite's backup API so it can safely copy the configured database even when WAL mode is enabled.
 
 ```bash
 node scripts/cli.js backup-db
 npm run backup-db
 ```
+
+
+### `restore`
+
+Safely restore a SQLite backup from `data/backups`. The restore command refuses files outside `data/backups`, validates the SQLite header and integrity check, checks for expected application tables, creates an emergency copy of the current database under `data/backups/emergency/`, moves the current database files into that emergency directory, copies the selected backup into the configured database path, and runs migrations. Every attempt is appended to `data/backups/restore-attempts.log`.
+
+The CLI confirmation is the backup filename you type as the positional argument:
+
+```bash
+npm run restore -- ./data/backups/history-YYYY-MM-DD-HH-mm-ss.sqlite
+```
+
+The admin UI provides the same workflow at `/admin/backups/restore`; it requires typing the selected backup filename or `RESTORE BACKUP` before the restore starts.
 
 ### `export-history`
 
@@ -273,6 +287,35 @@ Chrono Cache is a plain JavaScript Node.js/Express app backed by SQLite. The pub
 - `src/jobs/` for the in-memory fetch/backfill scheduler and recent-refresh scheduler.
 - `config/` for server and asset configuration.
 - `data/` for SQLite data, backups, and import files.
+
+
+### Disaster recovery: restoring a backup
+
+Use this workflow when the live SQLite database is corrupted, an import went wrong, or you need to roll back to a known backup.
+
+1. Identify the backup under `data/backups/`. Valid restore sources use the `history-YYYY-MM-DD-HH-mm-ss.sqlite` filename format.
+2. Prefer stopping the long-running server if you are using the CLI restore path:
+
+   ```bash
+   ./stop.sh
+   ```
+
+3. Run the safe restore command, typing the selected backup path as the argument:
+
+   ```bash
+   npm run restore -- ./data/backups/history-YYYY-MM-DD-HH-mm-ss.sqlite
+   ```
+
+4. Restart the app and verify health:
+
+   ```bash
+   ./start.sh
+   npm run self-check
+   ```
+
+5. Review `data/backups/restore-attempts.log` and the emergency files in `data/backups/emergency/`. Keep the emergency backup until you have verified the restored history.
+
+If the web server is running and admin access is available, you can instead open `/admin/backups/restore`. The admin workflow stops scheduler timers, creates the emergency backup, validates the selected SQLite file and expected tables, moves the current DB aside, copies the backup into place, runs migrations, and restarts in-memory asset and scheduler state.
 
 ### Setup
 
