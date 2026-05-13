@@ -1,5 +1,6 @@
 const { getMissingWindows, floorToUtcBoundary, INTERVAL_STEPS_MS } = require('../services/cache-policy');
 const logger = require('../utils/logger');
+const { getIntervalStaleness } = require('../services/staleness-service');
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const MINUTE_MS = 60 * 1000;
@@ -171,6 +172,28 @@ function buildRecentRefreshJobs(db, asset, interval, policy, now = Date.now()) {
     missingOrStaleTo: refreshWindow.to,
     reason: refreshWindow.stale ? 'stale_or_missing' : 'missing'
   }));
+}
+
+
+function coalesceIntervalJobs(jobs) {
+  if (jobs.length <= 1) {
+    return jobs;
+  }
+
+  const stepMs = INTERVAL_STEPS_MS[jobs[0].interval];
+  const from = Math.min(...jobs.map((job) => job.missingOrStaleFrom));
+  const to = Math.max(...jobs.map((job) => job.missingOrStaleTo));
+  const hasStale = jobs.some((job) => job.reason === 'stale_or_missing' || job.conflictPolicy === 'overwrite_existing');
+
+  return [{
+    ...jobs[0],
+    from: new Date(from).toISOString(),
+    to: new Date(to + stepMs).toISOString(),
+    missingOrStaleFrom: from,
+    missingOrStaleTo: to,
+    conflictPolicy: hasStale ? 'overwrite_existing' : 'fill_only_missing',
+    reason: hasStale ? 'stale_or_missing' : 'missing'
+  }];
 }
 
 function cloneAssetState(state) {
@@ -368,27 +391,35 @@ class RecentRefreshScheduler {
     let jobCount = 0;
 
     work.forEach(({ state, interval, intervalState }) => {
-      const jobs = buildRecentRefreshJobs(this.db, state.asset, interval, state.policy, now);
       const everyMs = getIntervalEveryMs(interval, state.policy);
+      const staleness = getIntervalStaleness(this.db, state.asset, interval, {
+        now,
+        jobScheduler: this.jobScheduler
+      });
+      const skippedForCooldown = staleness && staleness.failure && staleness.failure.inCooldown;
+      const shouldRepair = staleness && ['stale', 'empty'].includes(staleness.status);
+      const alreadyQueued = typeof this.jobScheduler.hasPendingJob === 'function' && this.jobScheduler.hasPendingJob((job) => (
+        job.type === 'recent_refresh' &&
+        job.payload.assetId === state.asset.id &&
+        job.payload.interval === interval
+      ));
+      const jobs = skippedForCooldown || alreadyQueued || !shouldRepair
+        ? []
+        : coalesceIntervalJobs(buildRecentRefreshJobs(this.db, state.asset, interval, state.policy, now));
 
       jobs.forEach((payload) => {
-        if (typeof this.jobScheduler.hasPendingJob === 'function' && this.jobScheduler.hasPendingJob((job) => (
-          job.type === 'recent_refresh' &&
-          job.payload.assetId === payload.assetId &&
-          job.payload.interval === payload.interval &&
-          job.payload.from === payload.from &&
-          job.payload.to === payload.to
-        ))) {
-          return;
-        }
-
         this.jobScheduler.enqueue('recent_refresh', payload, { assetPriority: state.asset.priority });
         jobCount += 1;
       });
 
       intervalState.lastRunAt = now;
-      intervalState.nextRunAt = now + everyMs;
+      intervalState.nextRunAt = skippedForCooldown && staleness.failure.cooldownUntil
+        ? Math.max(now + everyMs, staleness.failure.cooldownUntil)
+        : now + everyMs;
       intervalState.lastJobCount = jobs.length;
+      intervalState.lastStatus = staleness ? staleness.status : null;
+      intervalState.lastError = staleness ? staleness.lastError : null;
+      intervalState.cooldownUntil = staleness && staleness.failure ? staleness.failure.cooldownUntil : null;
       state.lastRunAt = now;
       state.lastRunJobCount += jobs.length;
       state.lastError = null;

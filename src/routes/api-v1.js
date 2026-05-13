@@ -7,6 +7,7 @@ const { enqueueBackfill } = require('../jobs/backfill-job');
 const { createScheduler } = require('../jobs/scheduler');
 const { assertTimestampRange, DAY_MS, parseDateInput } = require('../utils/date');
 const { buildSystemHealth } = require('../services/system-health');
+const { getAssetStaleness } = require('../services/staleness-service');
 const {
   buildHistoryCacheKey,
   getCachedResponse,
@@ -44,6 +45,18 @@ function getDatabase(req) {
   }
 
   return db;
+}
+
+
+function getConfiguredAssetForStaleness(req, asset) {
+  const configuredAssets = req.app.get('assets');
+
+  if (!Array.isArray(configuredAssets)) {
+    return asset;
+  }
+
+  const configuredAsset = configuredAssets.find((candidate) => candidate.id === asset.id);
+  return configuredAsset ? { ...asset, ...configuredAsset } : asset;
 }
 
 function getScheduler(req) {
@@ -378,6 +391,26 @@ router.get('/assets/:assetId', (req, res, next) => {
     }
 
     res.json({ asset });
+  } catch (error) {
+    next(error);
+  }
+});
+
+
+router.get('/admin/assets/:assetId/staleness', (req, res, next) => {
+  try {
+    const db = getDatabase(req);
+    const asset = getPublicAsset(db, req.params.assetId);
+
+    if (!asset) {
+      next(createNotFoundError(req.params.assetId));
+      return;
+    }
+
+    res.json({
+      asset: { id: asset.id, symbol: asset.symbol, vsCurrency: asset.vsCurrency },
+      staleness: getAssetStaleness(db, getConfiguredAssetForStaleness(req, asset), { jobScheduler: getScheduler(req) })
+    });
   } catch (error) {
     next(error);
   }

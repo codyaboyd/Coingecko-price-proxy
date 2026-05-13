@@ -9,6 +9,7 @@ const { runMigrations, MIGRATIONS } = require('../src/db/migrations');
 const { openDatabase } = require('../src/db/node-sqlite');
 const { getPublicAsset, listPublicAssets, upsertAssets } = require('../src/db/queries');
 const { getGapReport } = require('../src/services/cache-policy');
+const { getAssetStaleness, STALENESS_RULES } = require('../src/services/staleness-service');
 const { insertCandles } = require('../src/services/history-service');
 const { convertDumpFile } = require('../src/services/import-service');
 const { validateAssetsFile } = require('../src/services/asset-service');
@@ -201,6 +202,70 @@ test('gap detector finds missing candles', (t) => {
     toIso: '2026-01-02T00:00:00.000Z',
     count: 1
   }]);
+});
+
+
+test('staleness service classifies fresh, stale, empty, fetching, and failed intervals', (t) => {
+  const db = seedDatabase(t);
+  const now = Date.UTC(2026, 0, 2, 12, 0, 0);
+  const asset = {
+    ...TEST_ASSETS[0],
+    fetchPolicy: {
+      intervals: ['5m'],
+      dailyBackfill: true
+    }
+  };
+
+  insertCandles([
+    { ts: now - (10 * 60 * 1000), close: 42500 }
+  ], {
+    db,
+    assetId: 'btc',
+    vsCurrency: 'usd',
+    interval: '5m',
+    fetchedAt: now - (5 * 60 * 1000)
+  });
+  insertCandles([
+    { ts: now - (4 * 60 * 60 * 1000), close: 42500 }
+  ], {
+    db,
+    assetId: 'btc',
+    vsCurrency: 'usd',
+    interval: '1h',
+    fetchedAt: now - (3 * 60 * 60 * 1000)
+  });
+
+  const staleness = getAssetStaleness(db, asset, { now });
+  const byInterval = Object.fromEntries(staleness.intervals.map((intervalStatus) => [intervalStatus.interval, intervalStatus]));
+
+  assert.equal(STALENESS_RULES['5m'], 30 * 60 * 1000);
+  assert.equal(STALENESS_RULES['1h'], 3 * 60 * 60 * 1000);
+  assert.equal(STALENESS_RULES['1d'], 36 * 60 * 60 * 1000);
+  assert.equal(byInterval['5m'].status, 'fresh');
+  assert.equal(byInterval['1h'].status, 'stale');
+  assert.equal(byInterval['1d'].status, 'empty');
+
+  const fetching = getAssetStaleness(db, asset, {
+    now,
+    jobScheduler: {
+      hasPendingJob(predicate) {
+        return predicate({ type: 'recent_refresh', payload: { assetId: 'btc', interval: '1h' } });
+      }
+    }
+  });
+  assert.equal(fetching.intervals.find((intervalStatus) => intervalStatus.interval === '1h').status, 'fetching');
+
+  const insertRun = db.prepare(`
+    INSERT INTO fetch_runs (asset_id, vs_currency, interval, started_at, ended_at, status, candles_fetched, error_message, range_from, range_to, source, points_inserted, error, finished_at)
+    VALUES ('btc', 'usd', '1h', @at, @at, 'failed', 0, 'boom', @fromTs, @toTs, 'coingecko', 0, 'boom', @at)
+  `);
+  [1, 2, 3].forEach((index) => insertRun.run({ at: now - (index * 1000), fromTs: now - 10000, toTs: now }));
+
+  const failed = getAssetStaleness(db, asset, { now });
+  const failedInterval = failed.intervals.find((intervalStatus) => intervalStatus.interval === '1h');
+  assert.equal(failedInterval.status, 'failed');
+  assert.equal(failedInterval.lastError, 'boom');
+  assert.equal(failedInterval.failure.inCooldown, true);
 });
 
 test('history API rejects invalid dates and excessive client request rates', async (t) => {
