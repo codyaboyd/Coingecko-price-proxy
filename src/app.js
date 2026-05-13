@@ -5,6 +5,7 @@ const path = require('path');
 const adminAuthRoutes = require('./routes/admin-auth');
 const adminRoutes = require('./routes/admin');
 const apiV1Routes = require('./routes/api-v1');
+const docsRoutes = require('./routes/docs');
 const healthRoutes = require('./routes/health');
 const { errorHandler, notFoundHandler } = require('./middleware/error-handlers');
 const { requireAdminSession } = require('./middleware/auth');
@@ -42,6 +43,7 @@ function createApp(config) {
   app.use(express.json({ limit: '100kb' }));
   app.use('/public', express.static(path.join(process.cwd(), 'public')));
 
+  app.use('/docs', docsRoutes);
   app.use('/admin', adminAuthRoutes);
   app.use('/api/v1', createRateLimit());
   app.use('/api/v1/admin', requireAdminSession({ api: true }));

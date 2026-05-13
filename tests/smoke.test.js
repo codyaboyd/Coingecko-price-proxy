@@ -234,6 +234,35 @@ test('fake candles insert and history API returns candles while invalid asset re
 });
 
 
+
+test('local API docs render and OpenAPI JSON uses current assets', async (t) => {
+  const db = seedDatabase(t);
+  const app = createApp({ appName: 'chrono-cache-test' });
+  app.set('db', db);
+  app.set('assets', TEST_ASSETS);
+
+  const server = app.listen(0);
+  t.after(() => server.close());
+  await new Promise((resolve) => server.once('listening', resolve));
+
+  const { port } = server.address();
+  const baseUrl = `http://127.0.0.1:${port}`;
+  const docsResponse = await fetch(`${baseUrl}/docs`);
+  const docsHtml = await docsResponse.text();
+  const openApiResponse = await fetch(`${baseUrl}/api/v1/openapi.json`);
+  const openApi = await openApiResponse.json();
+
+  assert.equal(docsResponse.status, 200);
+  assert.match(docsHtml, /Local API Docs/);
+  assert.match(docsHtml, /api\/v1\/history\/:assetId/);
+  assert.match(docsHtml, /Copy/);
+  assert.equal(openApiResponse.status, 200);
+  assert.equal(openApi.openapi, '3.0.3');
+  assert.equal(openApi.paths['/assets/{assetId}'].get.parameters[0].example, 'btc');
+  assert.equal(openApi.paths['/assets'].get.responses[200].content['application/json'].example.assets[0].id, 'btc');
+});
+
+
 test('asset sync hides disabled and removed assets from public API lookups', (t) => {
   const db = createTempDatabase(t);
   runMigrations(db);
