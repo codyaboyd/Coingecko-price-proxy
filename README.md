@@ -171,6 +171,7 @@ The suite checks that configuration loads, migrations apply, assets validate, fa
 - `npm test` - run Node's built-in test runner against the practical smoke suite in `tests/smoke.test.js`.
 - `npm run smoke` - alias for the same practical smoke checks used by `npm test`.
 - `npm run backup-db` - run `node scripts/cli.js backup-db` to create a SQLite backup under `data/backups`.
+- `npm run bundle` - create a portable migration bundle under `data/exports/chrono-cache-bundle-YYYY-MM-DD-HH-mm-ss.tar.gz`.
 - `npm run export-history -- --asset btc --format csv` - export stored candle history.
 - `npm run repair-gaps -- --asset btc --from 2025-01-01 --to 2025-01-31 --interval 1d` - enqueue and run gap repair fetch jobs in the CLI process.
 - `npm run queue-status` - print the CLI limitation for inspecting the in-memory server queue.
@@ -178,6 +179,55 @@ The suite checks that configuration loads, migrations apply, assets validate, fa
 - `npm run convert` - placeholder for future conversion tooling.
 - `npm run backup` - alias for `npm run backup-db`.
 - `npm run restore -- ./data/backups/history-YYYY-MM-DD-HH-mm-ss.sqlite` - safely restore a backup from `data/backups`.
+
+
+### Portable server migration bundle
+
+Create a portable tarball for moving the app to a new server:
+
+```bash
+npm run bundle
+```
+
+The bundle is written to `data/exports/chrono-cache-bundle-YYYY-MM-DD-HH-mm-ss.tar.gz` and includes:
+
+- `config/`
+- `data/history.sqlite`; if the live database is missing, the latest `data/backups/history-*.sqlite` backup is copied into the bundle as `data/history.sqlite`
+- `package.json`
+- `package-lock.json` when present
+- server files: `server.js`, `src/`, `views/`, `public/`, and `scripts/`
+- `start.sh`, `stop.sh`, and `restart.sh`
+- `README.md`
+- `PORTABLE-RESTORE.md` with short restore steps
+
+The bundle excludes `node_modules`, `logs`, generated exports, and the real `.env` file by default. To intentionally include the real `.env`, run:
+
+```bash
+EXPORT_ENV=1 npm run bundle
+```
+
+Restore on the new server:
+
+1. Extract the bundle:
+
+   ```bash
+   tar -xzf data/exports/chrono-cache-bundle-YYYY-MM-DD-HH-mm-ss.tar.gz
+   cd chrono-cache-bundle-YYYY-MM-DD-HH-mm-ss
+   ```
+
+2. Copy your real `.env` into the extracted directory:
+
+   ```bash
+   cp /secure/path/to/.env .env
+   ```
+
+3. Start the app:
+
+   ```bash
+   ./start.sh
+   ```
+
+The admin dashboard also has a **Create portable bundle** button in the Migration card. It creates the same archive under `data/exports/` without exporting `.env` unless the running server process was started with `EXPORT_ENV=1`.
 
 ## Maintenance CLI
 
