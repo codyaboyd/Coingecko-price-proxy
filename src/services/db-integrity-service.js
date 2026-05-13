@@ -1,9 +1,11 @@
 const { MIGRATIONS } = require('../db/migrations');
 
 const EXPECTED_TABLES = [
+  'admin_events',
   'api_cache',
   'assets',
   'candles',
+  'config_changes',
   'fetch_runs',
   'import_runs',
   'jobs',

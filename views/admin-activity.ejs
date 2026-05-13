@@ -1,0 +1,139 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title><%= title %></title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="/public/css/app.css" rel="stylesheet">
+  </head>
+  <body>
+    <nav class="navbar navbar-expand-lg navbar-dark bg-dark">
+      <div class="container-fluid">
+        <a class="navbar-brand" href="/admin"><%= appName %></a>
+        <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#adminNavbar" aria-controls="adminNavbar" aria-expanded="false" aria-label="Toggle navigation">
+          <span class="navbar-toggler-icon"></span>
+        </button>
+        <div class="collapse navbar-collapse" id="adminNavbar">
+          <ul class="navbar-nav me-auto mb-2 mb-lg-0">
+            <li class="nav-item"><a class="nav-link" href="/admin">Dashboard</a></li>
+            <li class="nav-item"><a class="nav-link" href="/admin/assets">Assets</a></li>
+            <li class="nav-item"><a class="nav-link" href="/admin/imports">Imports</a></li>
+            <li class="nav-item"><a class="nav-link" href="/admin/backups">Backups</a></li>
+            <li class="nav-item"><a class="nav-link active" aria-current="page" href="/admin/activity">Activity</a></li>
+            <li class="nav-item"><a class="nav-link" href="/admin/logout">Logout</a></li>
+          </ul>
+        </div>
+      </div>
+    </nav>
+
+    <%- include('admin-maintenance-banner') %>
+
+    <main class="container py-4">
+      <div class="d-flex justify-content-between align-items-start flex-wrap gap-3 mb-4">
+        <div>
+          <h1 class="mb-1">Admin activity</h1>
+          <p class="text-secondary mb-0">Audit log for important administrator actions, including config changes, scheduler controls, jobs, backups, restores, imports, and sessions.</p>
+        </div>
+        <a href="/admin" class="btn btn-outline-secondary">Back to dashboard</a>
+      </div>
+
+      <div class="card shadow-sm mb-4">
+        <div class="card-header bg-white">
+          <h2 class="h5 mb-0">Filters</h2>
+        </div>
+        <div class="card-body">
+          <form method="get" action="/admin/activity" class="row g-3 align-items-end">
+            <div class="col-md-3">
+              <label class="form-label" for="action">Action</label>
+              <select id="action" name="action" class="form-select">
+                <option value="">All actions</option>
+                <% actionValues.forEach((action) => { %>
+                  <option value="<%= action %>" <%= filters.action === action ? 'selected' : '' %>><%= action %></option>
+                <% }) %>
+              </select>
+            </div>
+            <div class="col-md-3">
+              <label class="form-label" for="entityType">Entity type</label>
+              <select id="entityType" name="entityType" class="form-select">
+                <option value="">All entity types</option>
+                <% entityTypeValues.forEach((entityType) => { %>
+                  <option value="<%= entityType %>" <%= filters.entityType === entityType ? 'selected' : '' %>><%= entityType %></option>
+                <% }) %>
+              </select>
+            </div>
+            <div class="col-md-2">
+              <label class="form-label" for="from">From</label>
+              <input id="from" name="from" type="date" class="form-control" value="<%= filters.from %>">
+            </div>
+            <div class="col-md-2">
+              <label class="form-label" for="to">To</label>
+              <input id="to" name="to" type="date" class="form-control" value="<%= filters.to %>">
+            </div>
+            <div class="col-md-2 d-flex gap-2">
+              <button type="submit" class="btn btn-primary flex-grow-1">Apply</button>
+              <a class="btn btn-outline-secondary" href="/admin/activity">Reset</a>
+            </div>
+          </form>
+          <div class="mt-3">
+            <a class="btn btn-outline-success btn-sm" href="/admin/activity.csv?<%= new URLSearchParams({ action: filters.action, entityType: filters.entityType, from: filters.from, to: filters.to }).toString() %>">Export CSV</a>
+            <span class="text-secondary small ms-2">Exports up to 1,000 matching events.</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="card shadow-sm">
+        <div class="card-header bg-white d-flex justify-content-between align-items-center flex-wrap gap-2">
+          <h2 class="h5 mb-0">Events</h2>
+          <span class="badge text-bg-secondary"><%= events.length %> shown</span>
+        </div>
+        <div class="table-responsive">
+          <table class="table table-striped table-hover align-middle mb-0">
+            <thead>
+              <tr>
+                <th scope="col">Time</th>
+                <th scope="col">Actor</th>
+                <th scope="col">Action</th>
+                <th scope="col">Entity</th>
+                <th scope="col">Client</th>
+                <th scope="col">Details</th>
+              </tr>
+            </thead>
+            <tbody>
+              <% if (events.length === 0) { %>
+                <tr><td colspan="6" class="text-secondary">No activity matches these filters.</td></tr>
+              <% } %>
+              <% events.forEach((event) => { %>
+                <tr>
+                  <td class="text-nowrap"><%= event.createdAtIso %></td>
+                  <td><%= event.actor %></td>
+                  <td><span class="badge text-bg-primary"><%= event.action %></span></td>
+                  <td>
+                    <div><%= event.entityType || '—' %></div>
+                    <% if (event.entityId) { %>
+                      <code class="small"><%= event.entityId %></code>
+                    <% } %>
+                  </td>
+                  <td>
+                    <div class="small"><%= event.ipAddress || '—' %></div>
+                    <div class="text-secondary small text-break"><%= event.userAgent || '—' %></div>
+                  </td>
+                  <td class="text-break">
+                    <% if (event.detailsJson) { %>
+                      <details>
+                        <summary>Show JSON</summary>
+                        <pre class="bg-body-tertiary border rounded p-2 mt-2 mb-0 small"><%= JSON.stringify(event.details, null, 2) %></pre>
+                      </details>
+                    <% } else { %>
+                      <span class="text-secondary">—</span>
+                    <% } %>
+                  </td>
+                </tr>
+              <% }) %>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </main>
+  </body>
+</html>

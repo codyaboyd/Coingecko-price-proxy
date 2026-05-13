@@ -8,6 +8,7 @@ const { createApp } = require('../src/app');
 const { runMigrations, MIGRATIONS } = require('../src/db/migrations');
 const { openDatabase } = require('../src/db/node-sqlite');
 const { getPublicAsset, listPublicAssets, upsertAssets } = require('../src/db/queries');
+const { adminEventsToCsv, insertAdminEvent, listAdminEvents } = require('../src/services/admin-activity-service');
 const { getGapReport } = require('../src/services/cache-policy');
 const { getAssetStaleness, STALENESS_RULES } = require('../src/services/staleness-service');
 const { markStuckFetchRunsFailed, runDatabaseIntegrityCheck } = require('../src/services/db-integrity-service');
@@ -84,7 +85,46 @@ test('migrations run on an empty database', (t) => {
   assert.ok(tables.includes('jobs'));
   assert.ok(tables.includes('import_runs'));
   assert.ok(tables.includes('config_changes'));
+  assert.ok(tables.includes('admin_events'));
   assert.deepEqual(versions, MIGRATIONS.map((migration) => migration.version));
+});
+
+
+test('admin activity events can be inserted, filtered, and exported as CSV', (t) => {
+  const db = seedDatabase(t);
+  insertAdminEvent(db, {
+    actor: 'alice',
+    action: 'manual fetch',
+    entityType: 'asset',
+    entityId: 'btc',
+    details: { jobId: 123, range: '2026-01-01/2026-01-02' },
+    ipAddress: '127.0.0.1',
+    userAgent: 'node-test',
+    createdAt: Date.UTC(2026, 0, 2)
+  });
+  insertAdminEvent(db, {
+    actor: 'alice',
+    action: 'config edit',
+    entityType: 'config',
+    entityId: 'config/assets.json',
+    createdAt: Date.UTC(2026, 0, 3)
+  });
+
+  const filtered = listAdminEvents(db, {
+    action: 'manual fetch',
+    entityType: 'asset',
+    from: '2026-01-01',
+    to: '2026-01-02'
+  });
+
+  assert.equal(filtered.events.length, 1);
+  assert.equal(filtered.events[0].action, 'manual fetch');
+  assert.equal(filtered.events[0].details.jobId, 123);
+
+  const csv = adminEventsToCsv(filtered.events);
+  assert.match(csv, /id,created_at,actor,action,entity_type,entity_id,details_json,ip_address,user_agent/);
+  assert.match(csv, /manual fetch/);
+  assert.match(csv, /node-test/);
 });
 
 test('assets validate from config/assets.json', () => {

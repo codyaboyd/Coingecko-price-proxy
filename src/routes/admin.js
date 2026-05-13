@@ -22,6 +22,7 @@ const { getAssetStaleness } = require('../services/staleness-service');
 const { applyMaintenanceModeToRuntime, createMaintenanceError, isMaintenanceMode } = require('../services/maintenance-service');
 const { assertTimestampRange, DAY_MS, parseDateInput } = require('../utils/date');
 const { parseJsonText, rollbackConfigChange, saveConfigChange } = require('../services/config-change-service');
+const { ADMIN_EVENT_ACTIONS, ADMIN_EVENT_ENTITY_TYPES, adminEventsToCsv, listAdminEventFacetValues, listAdminEvents, recordAdminEvent } = require('../services/admin-activity-service');
 const logger = require('../utils/logger');
 
 const router = express.Router();
@@ -718,6 +719,18 @@ router.post('/doctor/fix', async (req, res, next) => {
       throw error;
     }
 
+    if (action === 'create-backup') {
+      recordAdminEvent(req, { action: 'backup created', entityType: 'backup', entityId: details, details: { route: '/admin/doctor/fix', doctorAction: action, summary: details } });
+    } else if (action === 'retry-failed-jobs') {
+      recordAdminEvent(req, { action: 'job retry', entityType: 'job', entityId: 'failed-jobs', details: { route: '/admin/doctor/fix', doctorAction: action, summary: details } });
+    } else if (action === 'pause-scheduler') {
+      recordAdminEvent(req, { action: 'scheduler pause', entityType: 'scheduler', entityId: 'recent-refresh', details: { route: '/admin/doctor/fix', doctorAction: action, summary: details } });
+    } else if (action === 'resume-scheduler') {
+      recordAdminEvent(req, { action: 'scheduler resume', entityType: 'scheduler', entityId: 'recent-refresh', details: { route: '/admin/doctor/fix', doctorAction: action, summary: details } });
+    } else if (action === 'repair-stale-assets') {
+      recordAdminEvent(req, { action: 'backfill request', entityType: 'scheduler', entityId: 'recent-refresh', details: { route: '/admin/doctor/fix', doctorAction: action, summary: details } });
+    }
+
     redirectWithDoctorAction(res, action, details);
   } catch (error) {
     next(error);
@@ -773,6 +786,13 @@ router.post('/imports/run', (req, res, next) => {
       interval
     });
 
+    recordAdminEvent(req, {
+      action: 'import run',
+      entityType: 'import',
+      entityId: result.importRunId || asset.id,
+      details: { status: result.status || 'completed', assetId: asset.id, fileName, normalizedPath: path.relative(process.cwd(), normalizedPath), rowsImported: result.rowsImported, policy }
+    });
+
     renderImportsPage(req, res, {
       selectedFile: path.relative(getImportsDirectory(req), normalizedPath),
       assetId: asset.id,
@@ -785,6 +805,12 @@ router.post('/imports/run', (req, res, next) => {
       }
     });
   } catch (error) {
+    recordAdminEvent(req, {
+      action: 'import run',
+      entityType: 'import',
+      entityId: req.body.assetId || req.body.file || null,
+      details: { status: 'failed', assetId: req.body.assetId, fileName: req.body.file, error: error.message }
+    });
     renderImportsPage(req, res, {
       selectedFile: req.body.file,
       assetId: req.body.assetId,
@@ -819,6 +845,7 @@ router.get('/backups', (req, res, next) => {
 router.post('/backups/create', async (req, res, next) => {
   try {
     const backup = await getBackupService(req).createBackup();
+    recordAdminEvent(req, { action: 'backup created', entityType: 'backup', entityId: backup.fileName, details: { fileName: backup.fileName, sizeBytes: backup.sizeBytes } });
     redirectWithBackupAction(res, 'created', backup.fileName);
   } catch (error) {
     next(error);
@@ -828,6 +855,7 @@ router.post('/backups/create', async (req, res, next) => {
 router.post('/backups/prune', (req, res, next) => {
   try {
     const result = getBackupService(req).pruneBackups();
+    recordAdminEvent(req, { action: 'backup deleted', entityType: 'backup', entityId: 'prune', details: result });
     redirectWithBackupAction(res, 'pruned', `${result.pruned} backup(s), ${result.deletedFiles} file(s) deleted`);
   } catch (error) {
     next(error);
@@ -861,6 +889,7 @@ router.post('/backups/restore', async (req, res, next) => {
     const config = req.app.get('config');
     const backupService = getBackupService(req);
     const backup = backupService.resolveBackupFile(req.body.backupFile);
+    recordAdminEvent(req, { action: 'restore attempted', entityType: 'restore', entityId: path.basename(backup), details: { status: 'started', backupFile: path.basename(backup) } });
     const result = await restoreBackup(config, {
       app: req.app,
       db: getDatabase(req),
@@ -869,8 +898,10 @@ router.post('/backups/restore', async (req, res, next) => {
       actor: req.adminUser && req.adminUser.username ? req.adminUser.username : 'admin-ui'
     });
 
+    recordAdminEvent(req, { action: 'restore attempted', entityType: 'restore', entityId: result.backupFileName, details: { status: 'completed', backupFileName: result.backupFileName, emergencyBackupPath: result.emergencyBackupPath ? path.relative(process.cwd(), result.emergencyBackupPath) : null } });
     redirectWithRestoreAction(res, 'restored', `${result.backupFileName}; emergency backup: ${result.emergencyBackupPath ? path.relative(process.cwd(), result.emergencyBackupPath) : 'none'}`);
   } catch (error) {
+    recordAdminEvent(req, { action: 'restore attempted', entityType: 'restore', entityId: req.body.backupFile || null, details: { status: 'failed', backupFile: req.body.backupFile, error: error.message } });
     logger.error(`Admin backup restore failed: ${error.message}`);
     redirectWithRestoreAction(res, 'restore failed', error.message);
   }
@@ -888,6 +919,7 @@ router.get('/backups/download/:file', (req, res, next) => {
 router.post('/backups/:id/delete', (req, res, next) => {
   try {
     const result = getBackupService(req).deleteBackup(req.params.id);
+    recordAdminEvent(req, { action: 'backup deleted', entityType: 'backup', entityId: req.params.id, details: result });
     redirectWithBackupAction(res, 'deleted', `${result.baseName}: ${result.deleted} file(s) deleted`);
   } catch (error) {
     next(error);
@@ -1052,6 +1084,7 @@ router.post('/config-history/edit', (req, res) => {
     const summary = String(req.body.summary || '').trim() || `Edit ${filePath}`;
     const change = saveAdminConfigChange(req, filePath, payload, summary);
     hotReloadConfigFile(req, filePath, payload);
+    recordAdminEvent(req, { action: 'config edit', entityType: 'config', entityId: filePath, details: { changeId: change.id, backupPath: change.backupPath, summary } });
     redirectWithConfigAction(res, 'saved', `${filePath} saved. Backup: ${change.backupPath}`, change.id);
   } catch (error) {
     redirectWithConfigAction(res, 'save failed', error.message);
@@ -1069,9 +1102,47 @@ router.post('/config-history/:id/rollback', (req, res) => {
     });
     const payload = parseJsonText(fs.readFileSync(resolveFromRoot(change.backupPath), 'utf8'));
     hotReloadConfigFile(req, change.filePath, payload);
+    recordAdminEvent(req, { action: 'config rollback', entityType: 'config', entityId: change.filePath, details: { sourceChangeId: change.id, rollbackChangeId: rollback.id, restoredFrom: change.backupPath, backupPath: rollback.backupPath } });
     redirectWithConfigAction(res, 'rolled back', `Restored ${change.filePath} from ${change.backupPath}. Current backup: ${rollback.backupPath}`, rollback.id);
   } catch (error) {
     redirectWithConfigAction(res, 'rollback failed', error.message, req.params.id);
+  }
+});
+
+
+router.get('/activity', (req, res, next) => {
+  try {
+    const config = req.app.get('config');
+    const db = getDatabase(req);
+    const { filters, events } = listAdminEvents(db, req.query, { limit: 200 });
+    const actionValues = Array.from(new Set([...ADMIN_EVENT_ACTIONS, ...listAdminEventFacetValues(db, 'action')])).sort();
+    const entityTypeValues = Array.from(new Set([...ADMIN_EVENT_ENTITY_TYPES, ...listAdminEventFacetValues(db, 'entity_type')])).sort();
+
+    res.render('admin-activity', {
+      title: `${config.adminTitle} - Activity`,
+      appName: config.appName,
+      filters,
+      events: events.map((event) => ({
+        ...event,
+        createdAtIso: formatTimestamp(event.createdAt)
+      })),
+      actionValues,
+      entityTypeValues
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.get('/activity.csv', (req, res, next) => {
+  try {
+    const { events } = listAdminEvents(getDatabase(req), req.query, { limit: 1000 });
+    res.type('text/csv');
+    res.set('Content-Disposition', 'attachment; filename="admin-activity.csv"');
+    res.send(`${adminEventsToCsv(events)}
+`);
+  } catch (error) {
+    next(error);
   }
 });
 
@@ -1146,6 +1217,7 @@ router.post('/assets/:id/edit', (req, res, next) => {
     payload.assets[index] = normalizeConfigAssetForm(req.body, payload.assets[index]);
     const change = saveAdminConfigChange(req, 'config/assets.json', payload, `Edit asset ${payload.assets[index].id}`);
     hotReloadConfigFile(req, 'config/assets.json', payload);
+    recordAdminEvent(req, { action: 'config edit', entityType: 'asset', entityId: payload.assets[index].id, details: { changeId: change.id, backupPath: change.backupPath, filePath: 'config/assets.json' } });
 
     const params = new URLSearchParams({
       alert: 'success',
@@ -1261,6 +1333,7 @@ router.post('/assets/:id/test/fetch-recent', (req, res, next) => {
     const policy = normalizeFetchPolicy(asset);
     const jobs = policy.intervals.flatMap((interval) => buildRecentRefreshJobs(getDatabase(req), asset, interval, policy, Date.now()));
     const enqueuedJobs = jobs.map((payload) => scheduler.enqueue('recent_refresh', payload, { assetPriority: asset.priority }));
+    recordAdminEvent(req, { action: 'manual fetch', entityType: 'asset', entityId: asset.id, details: { kind: 'fetch-recent', jobCount: enqueuedJobs.length, jobs: enqueuedJobs.map((job) => job.id), policy } });
 
     res.status(202).json({
       ok: true,
@@ -1327,6 +1400,7 @@ router.post('/cache/clear', (req, res, next) => {
 router.post('/jobs/:id/retry', (req, res, next) => {
   try {
     const job = getScheduler(req).retryJob(Number(req.params.id));
+    recordAdminEvent(req, { action: 'job retry', entityType: 'job', entityId: req.params.id, details: { retried: Boolean(job), job } });
     redirectWithSchedulerAction(res, 'job-retried', job ? `Job #${job.id} queued for retry` : `Job #${req.params.id} was not retried`);
   } catch (error) {
     next(error);
@@ -1336,6 +1410,7 @@ router.post('/jobs/:id/retry', (req, res, next) => {
 router.post('/jobs/:id/cancel', (req, res, next) => {
   try {
     const job = getScheduler(req).cancelJob(Number(req.params.id));
+    recordAdminEvent(req, { action: 'job cancel', entityType: 'job', entityId: req.params.id, details: { cancelled: Boolean(job), job } });
     redirectWithSchedulerAction(res, 'job-cancelled', job ? `Job #${job.id} cancelled` : `Job #${req.params.id} was not cancellable`);
   } catch (error) {
     next(error);
@@ -1345,6 +1420,7 @@ router.post('/jobs/:id/cancel', (req, res, next) => {
 router.post('/scheduler/pause', (req, res, next) => {
   try {
     getRecentRefreshScheduler(req).pause();
+    recordAdminEvent(req, { action: 'scheduler pause', entityType: 'scheduler', entityId: 'recent-refresh', details: { route: '/admin/scheduler/pause' } });
     redirectWithSchedulerAction(res, 'paused');
   } catch (error) {
     next(error);
@@ -1354,6 +1430,7 @@ router.post('/scheduler/pause', (req, res, next) => {
 router.post('/scheduler/resume', (req, res, next) => {
   try {
     getRecentRefreshScheduler(req).resume();
+    recordAdminEvent(req, { action: 'scheduler resume', entityType: 'scheduler', entityId: 'recent-refresh', details: { route: '/admin/scheduler/resume' } });
     redirectWithSchedulerAction(res, 'resumed');
   } catch (error) {
     next(error);
@@ -1365,6 +1442,7 @@ router.post('/scheduler/repair-stale', (req, res, next) => {
   try {
     requireMaintenanceDisabled(req, 'Maintenance mode is active; repair jobs are paused.');
     const result = getRecentRefreshScheduler(req).runNow();
+    recordAdminEvent(req, { action: 'backfill request', entityType: 'scheduler', entityId: 'recent-refresh', details: { kind: 'repair-stale', jobCount: result.jobCount } });
     redirectWithSchedulerAction(res, 'repair-stale', `${result.jobCount} repair job(s) queued`);
   } catch (error) {
     next(error);
@@ -1375,6 +1453,7 @@ router.post('/scheduler/run-now', (req, res, next) => {
   try {
     requireMaintenanceDisabled(req, 'Maintenance mode is active; refresh jobs are paused.');
     const result = getRecentRefreshScheduler(req).runNow();
+    recordAdminEvent(req, { action: 'manual fetch', entityType: 'scheduler', entityId: 'recent-refresh', details: { kind: 'run-now', jobCount: result.jobCount } });
     redirectWithSchedulerAction(res, 'run-now', `${result.jobCount} job(s) queued`);
   } catch (error) {
     next(error);
@@ -1389,6 +1468,7 @@ router.post('/maintenance', (req, res, next) => {
     payload.maintenanceMode = enable;
     const change = saveAdminConfigChange(req, 'config/server.json', payload, `Maintenance mode ${enable ? 'enabled' : 'disabled'}`);
     hotReloadConfigFile(req, 'config/server.json', payload);
+    recordAdminEvent(req, { action: 'maintenance mode toggle', entityType: 'config', entityId: 'config/server.json', details: { enabled: enable, changeId: change.id, backupPath: change.backupPath } });
     redirectWithSchedulerAction(
       res,
       enable ? 'maintenance-on' : 'maintenance-off',

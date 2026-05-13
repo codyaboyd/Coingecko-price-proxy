@@ -7,6 +7,8 @@ const {
   validateLogin
 } = require('../middleware/auth');
 
+const { recordAdminEvent } = require('../services/admin-activity-service');
+
 const router = express.Router();
 
 function getSafeReturnTo(value) {
@@ -47,6 +49,12 @@ router.post('/login', (req, res) => {
   const returnTo = getSafeReturnTo(req.body.returnTo);
 
   if (validateLogin(req, username, password)) {
+    recordAdminEvent(req, {
+      actor: username,
+      action: 'login',
+      entityType: 'session',
+      entityId: username
+    });
     setAdminSessionCookie(req, res, username);
     res.redirect(returnTo);
     return;
@@ -61,11 +69,25 @@ router.post('/login', (req, res) => {
 });
 
 router.post('/logout', (req, res) => {
+  const session = readSession(req);
+  recordAdminEvent(req, {
+    actor: session && session.username ? session.username : 'admin-ui',
+    action: 'logout',
+    entityType: 'session',
+    entityId: session && session.username ? session.username : null
+  });
   clearAdminSessionCookie(req, res);
   res.redirect('/admin/login');
 });
 
 router.get('/logout', (req, res) => {
+  const session = readSession(req);
+  recordAdminEvent(req, {
+    actor: session && session.username ? session.username : 'admin-ui',
+    action: 'logout',
+    entityType: 'session',
+    entityId: session && session.username ? session.username : null
+  });
   clearAdminSessionCookie(req, res);
   res.redirect('/admin/login');
 });
