@@ -70,6 +70,15 @@ logs/
    npm run smoke
    ```
 
+## CoinGecko rate-budget safe mode
+
+CoinGecko counts failed requests against the rate limit, so the fetch system includes a conservative budget planner. Configure these environment variables in `.env` or the process environment:
+
+- `COINGECKO_MAX_CALLS_PER_MINUTE` - configured CoinGecko request budget; defaults to `20`.
+- `COINGECKO_SAFE_MODE=true` - enables conservative behavior. After any `429` response the effective rate drops to 50% and slowly recovers over time, and internal request retries are kept deliberately low.
+
+The admin planner is available at `/admin/rate-budget` and shows calls used this minute, safe remaining calls, projected queued work, estimated drain time, and assets that are expensive to backfill. Manual backfill controls also warn before queueing large call-consuming work.
+
 ## Running the app
 
 Start the server directly:

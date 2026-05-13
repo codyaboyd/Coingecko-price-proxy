@@ -1,4 +1,5 @@
 const logger = require('./logger');
+const { getGlobalRateBudgetService } = require('../services/rate-budget-service');
 
 const DEFAULT_MAX_CALLS_PER_MINUTE = 20;
 const ONE_MINUTE_MS = 60 * 1000;
@@ -27,6 +28,7 @@ class RateLimiter {
     this.timer = null;
     this.processing = false;
     this.pausedUntil = 0;
+    this.rateBudget = options.rateBudget || getGlobalRateBudgetService({ maxCallsPerMinute: this.maxCallsPerMinute });
   }
 
   getStatus(now = Date.now()) {
@@ -35,6 +37,7 @@ class RateLimiter {
     return {
       callsUsedThisMinute: this.calls.length,
       maxCallsPerMinute: this.maxCallsPerMinute,
+      effectiveMaxCallsPerMinute: this.getEffectiveMaxCallsPerMinute(now),
       queuedTasks: this.queue.length,
       pausedUntil: this.pausedUntil > now ? this.pausedUntil : null
     };
@@ -103,7 +106,7 @@ class RateLimiter {
 
     this.removeExpiredCalls(now);
 
-    if (this.calls.length < this.maxCallsPerMinute) {
+    if (this.calls.length < this.getEffectiveMaxCallsPerMinute(now)) {
       return 0;
     }
 
@@ -114,6 +117,18 @@ class RateLimiter {
     const now = Date.now();
     this.removeExpiredCalls(now);
     this.calls.push(now);
+
+    if (this.rateBudget && typeof this.rateBudget.recordCall === 'function') {
+      this.rateBudget.recordCall();
+    }
+  }
+
+  getEffectiveMaxCallsPerMinute(now = Date.now()) {
+    if (this.rateBudget && typeof this.rateBudget.getEffectiveMaxCallsPerMinute === 'function') {
+      return this.rateBudget.getEffectiveMaxCallsPerMinute(now);
+    }
+
+    return this.maxCallsPerMinute;
   }
 
   removeExpiredCalls(now) {

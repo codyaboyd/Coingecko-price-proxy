@@ -14,6 +14,7 @@ const { createBackupService } = require('../services/backup-service');
 const { RESTORE_CONFIRMATION_PHRASE, restoreBackup } = require('../services/restore-service');
 const { fetchMarketChartRange } = require('../services/coingecko');
 const { getGapReport } = require('../services/cache-policy');
+const { getGlobalRateBudgetService } = require('../services/rate-budget-service');
 const { buildSystemHealth, bytesToSummary } = require('../services/system-health');
 const { getAssetStaleness } = require('../services/staleness-service');
 const { applyMaintenanceModeToRuntime, createMaintenanceError, isMaintenanceMode, setMaintenanceMode } = require('../services/maintenance-service');
@@ -740,6 +741,30 @@ router.get('/reload-status', (req, res, next) => {
 });
 
 
+
+router.get('/rate-budget', (req, res, next) => {
+  try {
+    const config = req.app.get('config');
+    const rateBudget = getGlobalRateBudgetService();
+    const snapshot = rateBudget.buildSnapshot({
+      scheduler: getScheduler(req),
+      assets: getConfiguredAssets(req)
+    });
+
+    res.render('admin-rate-budget', {
+      title: `${config.adminTitle} - Rate Budget`,
+      appName: config.appName,
+      budget: {
+        ...snapshot,
+        last429AtIso: formatTimestamp(snapshot.last429At),
+        recoveryUntilIso: formatTimestamp(snapshot.recoveryUntil)
+      }
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
 router.get('/system-health', (req, res, next) => {
   try {
     const config = req.app.get('config');
@@ -986,7 +1011,8 @@ router.get('/assets/:id', (req, res, next) => {
         count: bounds.candle_count || 0
       },
       fetchRuns,
-      staleness
+      staleness,
+      rateBudget: getGlobalRateBudgetService().buildSnapshot({ scheduler: getScheduler(req), assets: getConfiguredAssets(req) })
     });
   } catch (error) {
     next(error);

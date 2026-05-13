@@ -8,6 +8,7 @@ const { createScheduler } = require('../jobs/scheduler');
 const { assertTimestampRange, DAY_MS, parseDateInput } = require('../utils/date');
 const { buildSystemHealth } = require('../services/system-health');
 const { getAssetStaleness } = require('../services/staleness-service');
+const { getGlobalRateBudgetService } = require('../services/rate-budget-service');
 const { createMaintenanceError, isMaintenanceMode } = require('../services/maintenance-service');
 const {
   buildHistoryCacheKey,
@@ -365,6 +366,17 @@ function sendHistoryResponse(res, payload) {
 }
 
 
+
+router.get('/admin/rate-budget', (req, res, next) => {
+  try {
+    const scheduler = getScheduler(req);
+    const assets = req.app.get('assets') || [];
+    res.json({ budget: getGlobalRateBudgetService().buildSnapshot({ scheduler, assets }) });
+  } catch (error) {
+    next(error);
+  }
+});
+
 router.get('/admin/system-health', (req, res, next) => {
   try {
     res.json(buildSystemHealth(req.app));
@@ -482,6 +494,28 @@ router.post('/admin/assets/:assetId/fetch', (req, res, next) => {
   }
 });
 
+
+router.post('/admin/assets/:assetId/backfill/plan', (req, res, next) => {
+  try {
+    requireMaintenanceDisabled(req, 'Maintenance mode is active; CoinGecko backfill jobs are paused.');
+    const scheduler = getScheduler(req);
+    const result = enqueueBackfill(getDatabase(req), scheduler, req.params.assetId, req.body, { dryRun: true });
+    const budget = getGlobalRateBudgetService().buildSnapshot({ scheduler, assets: req.app.get('assets') || [] });
+
+    res.json({
+      asset: result.asset,
+      request: result.request,
+      gaps: result.gaps,
+      chunks: result.chunks,
+      projectedCalls: result.projectedCalls,
+      budget,
+      warning: result.projectedCalls > budget.safeRemainingCalls || result.projectedCalls >= 10
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
 router.post('/admin/assets/:assetId/backfill', (req, res, next) => {
   try {
     requireMaintenanceDisabled(req, 'Maintenance mode is active; CoinGecko backfill jobs are paused.');
@@ -492,6 +526,7 @@ router.post('/admin/assets/:assetId/backfill', (req, res, next) => {
       request: result.request,
       gaps: result.gaps,
       chunks: result.chunks,
+      projectedCalls: result.projectedCalls,
       enqueuedJobs: result.enqueuedJobs,
       queue: getScheduler(req).getStatus()
     });

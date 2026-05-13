@@ -1,6 +1,7 @@
 const logger = require('../utils/logger');
 const { createProxyAwareFetch } = require('../utils/proxy-fetch');
 const { getGlobalLimiter, sleep } = require('../utils/limiter');
+const { getGlobalRateBudgetService } = require('./rate-budget-service');
 
 const DEFAULT_API_BASE = 'https://api.coingecko.com/api/v3';
 const DEFAULT_TIMEOUT_MS = 15 * 1000;
@@ -144,9 +145,10 @@ function createCoinGeckoClient(options = {}) {
   const baseBackoffMs = parsePositiveInteger(options.baseBackoffMs || process.env.COINGECKO_BACKOFF_MS, DEFAULT_BACKOFF_MS);
   const limiter = options.limiter || getGlobalLimiter();
   const fetchImpl = options.fetch || createProxyAwareFetch(fetch);
+  const rateBudget = options.rateBudget || getGlobalRateBudgetService();
   const authHeaders = buildAuthHeaders(apiKey, apiKeyType);
 
-  async function requestJson(pathname, searchParams) {
+  async function requestJson(pathname, searchParams, requestOptions = {}) {
     const url = new URL(`${baseUrl}${pathname}`);
 
     Object.entries(searchParams || {}).forEach(([key, value]) => {
@@ -154,20 +156,29 @@ function createCoinGeckoClient(options = {}) {
     });
 
     let lastError;
+    let callsForRefresh = 0;
+    const retryBudget = rateBudget && typeof rateBudget.getRetryBudget === 'function' ? rateBudget.getRetryBudget() : null;
+    const maxRetries = retryBudget === null ? retries : Math.min(retries, retryBudget);
 
-    for (let attempt = 0; attempt <= retries; attempt += 1) {
-      const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      for (let attempt = 0; attempt <= maxRetries; attempt += 1) {
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), timeoutMs);
 
-      try {
-        const response = await limiter.schedule(() => fetchImpl(url, {
-          headers: {
-            accept: 'application/json',
-            'user-agent': 'chrono-cache/0.1 (+https://github.com/local/chrono-cache)',
-            ...authHeaders
-          },
-          signal: controller.signal
-        }));
+        try {
+          callsForRefresh += 1;
+          const response = await limiter.schedule(() => fetchImpl(url, {
+            headers: {
+              accept: 'application/json',
+              'user-agent': 'chrono-cache/0.1 (+https://github.com/local/chrono-cache)',
+              ...authHeaders
+            },
+            signal: controller.signal
+          }));
+
+        if (rateBudget && typeof rateBudget.recordResponse === 'function') {
+          rateBudget.recordResponse(response.status);
+        }
 
         if (response.ok) {
           try {
@@ -186,7 +197,7 @@ function createCoinGeckoClient(options = {}) {
         });
         lastError = error;
 
-        if (!isRetryableStatus(response.status) || attempt >= retries) {
+        if (!isRetryableStatus(response.status) || attempt >= maxRetries) {
           throw error;
         }
 
@@ -194,6 +205,10 @@ function createCoinGeckoClient(options = {}) {
           const pauseMs = Math.max(rateLimitPauseMs, retryAfterMs || 0);
           logger.warn(`CoinGecko rate limit hit; pausing queue for ${pauseMs}ms before retrying.`);
           limiter.pause(pauseMs);
+
+          if (rateBudget && rateBudget.safeMode) {
+            throw error;
+          }
         }
 
         await sleep(getBackoffMs(attempt, baseBackoffMs, retryAfterMs));
@@ -205,11 +220,15 @@ function createCoinGeckoClient(options = {}) {
 
         lastError = error;
 
-        if (error.status && (!isRetryableStatus(error.status) || attempt >= retries)) {
+        if (!error.status && rateBudget && typeof rateBudget.recordFailure === 'function') {
+          rateBudget.recordFailure(error);
+        }
+
+        if (error.status && (!isRetryableStatus(error.status) || attempt >= maxRetries)) {
           throw error;
         }
 
-        if (attempt >= retries) {
+        if (attempt >= maxRetries) {
           throw error;
         }
 
@@ -217,6 +236,11 @@ function createCoinGeckoClient(options = {}) {
         await sleep(getBackoffMs(attempt, baseBackoffMs));
       } finally {
         clearTimeout(timeout);
+      }
+      }
+    } finally {
+      if (requestOptions.trackRefresh !== false && rateBudget && typeof rateBudget.recordAssetRefresh === 'function') {
+        rateBudget.recordAssetRefresh(callsForRefresh);
       }
     }
 
@@ -237,7 +261,7 @@ function createCoinGeckoClient(options = {}) {
       vs_currency: currency,
       from,
       to
-    });
+    }, { assetId: id });
   }
 
   return {

@@ -14,6 +14,7 @@
         <div class="navbar-nav ms-auto">
           <a class="nav-link" href="/admin/assets">Assets</a>
           <a class="nav-link" href="/admin/system-health">System Health</a>
+          <a class="nav-link" href="/admin/rate-budget">Rate Budget</a>
           <a class="nav-link" href="/admin/api-test">API Test</a>
           <a class="nav-link" href="/admin/logout">Logout</a>
         </div>
@@ -168,6 +169,10 @@
                 </div>
               </form>
 
+              <div id="rateBudgetWarning" class="alert alert-warning mt-3 mb-0" role="alert">
+                Rate budget: <strong><%= rateBudget.safeRemainingCalls %></strong> safe calls remain this minute; queued work is estimated at <strong><%= rateBudget.queueEstimatedCalls %></strong> calls.
+                Large manual fetches and backfills will show a confirmation before queueing.
+              </div>
               <div id="existingDataSummary" class="alert alert-secondary mt-3 mb-0" role="status">
                 Check local data to see whether candles already exist before fetching.
               </div>
@@ -254,6 +259,7 @@
       const gapSummary = document.getElementById('gapSummary');
       const gapResponse = document.getElementById('gapResponse');
       const assetGapsUrl = '/api/v1/admin/assets/<%= encodeURIComponent(asset.id) %>/gaps';
+      const initialRateBudget = <%- JSON.stringify({ safeRemainingCalls: rateBudget.safeRemainingCalls, queueEstimatedCalls: rateBudget.queueEstimatedCalls }) %>;
 
       function getRangePayload() {
         return {
@@ -372,24 +378,51 @@
         }
       });
 
+      async function postJson(url, payload) {
+        const response = await fetch(url, {
+          method: 'POST',
+          headers: {
+            Accept: 'application/json',
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify(payload)
+        });
+        const data = await response.json();
+
+        if (!response.ok) {
+          const message = data.error && data.error.message ? data.error.message : `${response.status} ${response.statusText}`;
+          throw new Error(message);
+        }
+
+        return { response, data };
+      }
+
       backfillButton.addEventListener('click', async () => {
         statusBadge.className = 'badge text-bg-secondary';
         statusBadge.textContent = 'Planning backfill';
-        responseBody.textContent = 'Detecting missing windows and queueing backfill chunks...';
+        responseBody.textContent = 'Detecting missing windows before queueing backfill chunks...';
 
         try {
-          const response = await fetch('/api/v1/admin/assets/<%= encodeURIComponent(asset.id) %>/backfill', {
-            method: 'POST',
-            headers: {
-              Accept: 'application/json',
-              'Content-Type': 'application/json'
-            },
-            body: JSON.stringify(getFetchPayload())
-          });
-          const data = await response.json();
+          const payload = getFetchPayload();
+          const plan = await postJson('/api/v1/admin/assets/<%= encodeURIComponent(asset.id) %>/backfill/plan', payload);
+          const projectedCalls = Number(plan.data.projectedCalls || 0);
+          const safeRemaining = Number(plan.data.budget ? plan.data.budget.safeRemainingCalls : initialRateBudget.safeRemainingCalls);
+          const needsConfirmation = projectedCalls >= 10 || projectedCalls > safeRemaining;
 
-          setBadge(statusBadge, response.ok, `${response.status} ${response.statusText}`);
-          responseBody.textContent = JSON.stringify(data, null, 2);
+          if (needsConfirmation) {
+            const confirmed = window.confirm(`This backfill is estimated to consume ${projectedCalls} CoinGecko call(s). Safe remaining calls this minute: ${safeRemaining}. Continue queueing?`);
+
+            if (!confirmed) {
+              statusBadge.className = 'badge text-bg-warning';
+              statusBadge.textContent = 'Backfill cancelled';
+              responseBody.textContent = JSON.stringify({ cancelled: true, plan: plan.data }, null, 2);
+              return;
+            }
+          }
+
+          const result = await postJson('/api/v1/admin/assets/<%= encodeURIComponent(asset.id) %>/backfill', payload);
+          setBadge(statusBadge, true, `${result.response.status} ${result.response.statusText}`);
+          responseBody.textContent = JSON.stringify({ plan: plan.data, queued: result.data }, null, 2);
         } catch (error) {
           statusBadge.className = 'badge text-bg-danger';
           statusBadge.textContent = 'Request failed';
@@ -407,6 +440,19 @@
 
         try {
           const report = await runGapReport({ updateGapPanel: false });
+          const needsConfirmation = initialRateBudget.safeRemainingCalls < 1 || report.missingCount > 1000;
+
+          if (needsConfirmation) {
+            const confirmed = window.confirm(`Manual fetch will consume at least 1 CoinGecko call and covers ${report.missingCount} missing candle bucket(s). Safe remaining calls this minute: ${initialRateBudget.safeRemainingCalls}. Continue?`);
+
+            if (!confirmed) {
+              statusBadge.className = 'badge text-bg-warning';
+              statusBadge.textContent = 'Manual fetch cancelled';
+              responseBody.textContent = 'Manual fetch was cancelled before consuming CoinGecko calls.';
+              return;
+            }
+          }
+
           responseBody.textContent = `Local data check complete: ${report.foundCount} of ${report.expectedCount} expected candles already exist; ${report.missingCount} are missing.\n\nQueueing manual CoinGecko fetch...`;
           statusBadge.textContent = 'Queueing';
 
