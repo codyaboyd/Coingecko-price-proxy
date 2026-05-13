@@ -3,6 +3,7 @@ const path = require('path');
 const chokidar = require('chokidar');
 
 const { upsertAssets } = require('../db/queries');
+const { registerImportFile } = require('./import-service');
 const { loadAssets } = require('./asset-service');
 const { loadServerConfig } = require('../utils/config');
 const { ensureDirectory, resolveFromRoot } = require('../utils/files');
@@ -40,10 +41,12 @@ function formatError(error) {
 
 function cloneCandidate(candidate) {
   return {
+    id: candidate.id,
     fileName: candidate.fileName,
     path: candidate.path,
     size: candidate.size,
     status: candidate.status,
+    fileHash: candidate.fileHash,
     firstSeenAt: candidate.firstSeenAt,
     updatedAt: candidate.updatedAt
   };
@@ -246,15 +249,42 @@ class HotReloadManager {
       return;
     }
 
-    fs.readdirSync(importsPath, { withFileTypes: true }).forEach((entry) => {
-      if (entry.isFile()) {
-        this.detectImportCandidate(path.join(importsPath, entry.name), { silent: true });
-      }
-    });
+    const scan = (directory) => {
+      fs.readdirSync(directory, { withFileTypes: true }).forEach((entry) => {
+        if (entry.name.startsWith('.')) {
+          return;
+        }
+
+        const absolutePath = path.join(directory, entry.name);
+        const relativeParts = path.relative(importsPath, absolutePath).split(path.sep);
+
+        if (['archive', 'failed', 'converted'].includes(relativeParts[0])) {
+          return;
+        }
+
+        if (entry.isDirectory()) {
+          scan(absolutePath);
+          return;
+        }
+
+        if (entry.isFile()) {
+          this.detectImportCandidate(absolutePath, { silent: true });
+        }
+      });
+    };
+
+    scan(importsPath);
   }
 
   detectImportCandidate(candidatePath, options = {}) {
     const resolvedPath = path.resolve(candidatePath);
+    const importsPath = path.resolve(this.importsDir);
+    const relativeParts = path.relative(importsPath, resolvedPath).split(path.sep);
+
+    if (['archive', 'failed', 'converted'].includes(relativeParts[0])) {
+      return null;
+    }
+
     const fileName = path.basename(resolvedPath);
 
     if (fileName.startsWith('.')) {
@@ -275,11 +305,14 @@ class HotReloadManager {
 
     const now = Date.now();
     const existing = this.importCandidates.get(resolvedPath);
+    const importFile = this.db ? registerImportFile(this.db, resolvedPath, { filename: path.relative(path.resolve(this.importsDir), resolvedPath), now }) : null;
     const candidate = {
+      id: importFile ? importFile.id : null,
       fileName,
       path: resolvedPath,
       size: stats.size,
-      status: 'pending',
+      status: importFile ? importFile.status : 'pending',
+      fileHash: importFile ? importFile.fileHash : null,
       firstSeenAt: existing ? existing.firstSeenAt : now,
       updatedAt: now
     };

@@ -205,6 +205,34 @@ const MIGRATIONS = [
         ON alerts(type, entity_type, entity_id, status);
     `
 
+  },
+  {
+    version: 9,
+    name: 'add_import_files_inbox',
+    up: `
+      CREATE TABLE IF NOT EXISTS import_files (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        filename TEXT NOT NULL,
+        full_path TEXT NOT NULL,
+        file_hash TEXT NOT NULL UNIQUE,
+        status TEXT NOT NULL CHECK (status IN ('pending', 'previewed', 'converted', 'imported', 'failed', 'archived')),
+        detected_format TEXT,
+        asset_id TEXT,
+        interval TEXT,
+        rows_seen INTEGER NOT NULL DEFAULT 0,
+        rows_imported INTEGER NOT NULL DEFAULT 0,
+        last_error TEXT,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL,
+        FOREIGN KEY(asset_id) REFERENCES assets(id) ON DELETE SET NULL
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_import_files_status_updated
+        ON import_files(status, updated_at DESC, id DESC);
+
+      CREATE INDEX IF NOT EXISTS idx_import_files_hash
+        ON import_files(file_hash);
+    `
   }
 ];
 
