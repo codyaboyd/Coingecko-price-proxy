@@ -14,6 +14,7 @@ const { insertCandles } = require('../src/services/history-service');
 const { convertDumpFile } = require('../src/services/import-service');
 const { validateAssetsFile } = require('../src/services/asset-service');
 const { loadServerConfig } = require('../src/utils/config');
+const { createScheduler } = require('../src/jobs/scheduler');
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const FIXTURE_CSV = path.join(process.cwd(), 'test-fixtures', 'sample-history.csv');
@@ -78,6 +79,7 @@ test('migrations run on an empty database', (t) => {
   assert.deepEqual(applied.map((migration) => migration.version), MIGRATIONS.map((migration) => migration.version));
   assert.ok(tables.includes('assets'));
   assert.ok(tables.includes('candles'));
+  assert.ok(tables.includes('jobs'));
   assert.ok(tables.includes('import_runs'));
   assert.deepEqual(versions, MIGRATIONS.map((migration) => migration.version));
 });
@@ -404,3 +406,43 @@ test('system health reports startup degraded mode', (t) => {
   assert.equal(health.checks.find((check) => check.id === 'startup_mode').summary, 'Degraded mode');
   assert.equal(health.checks.find((check) => check.id === 'startup_backup_directory_writable').status, 'warning');
 });
+
+test('durable scheduler recovers stale running jobs on startup', (t) => {
+  const db = seedDatabase(t);
+  const oldLockedAt = Date.now() - (31 * 60 * 1000);
+  const insertJob = db.prepare(`
+    INSERT INTO jobs (type, payload_json, priority, status, attempts, max_attempts, run_after, locked_at, locked_by, created_at, updated_at, last_error)
+    VALUES (@type, @payloadJson, 1, 'running', @attempts, @maxAttempts, @runAfter, @lockedAt, 'old-worker', @createdAt, @updatedAt, NULL)
+  `);
+
+  const retryable = insertJob.run({
+    type: 'manual_admin_fetch',
+    payloadJson: JSON.stringify({ assetId: 'btc' }),
+    attempts: 1,
+    maxAttempts: 3,
+    runAfter: oldLockedAt,
+    lockedAt: oldLockedAt,
+    createdAt: oldLockedAt,
+    updatedAt: oldLockedAt
+  }).lastInsertRowid;
+  const exhausted = insertJob.run({
+    type: 'manual_admin_fetch',
+    payloadJson: JSON.stringify({ assetId: 'btc' }),
+    attempts: 3,
+    maxAttempts: 3,
+    runAfter: oldLockedAt,
+    lockedAt: oldLockedAt,
+    createdAt: oldLockedAt,
+    updatedAt: oldLockedAt
+  }).lastInsertRowid;
+
+  const scheduler = createScheduler({ db });
+
+  const retryableJob = scheduler.getJob(retryable);
+  const exhaustedJob = scheduler.getJob(exhausted);
+  assert.equal(retryableJob.status, 'queued');
+  assert.equal(retryableJob.lockedAt, null);
+  assert.equal(exhaustedJob.status, 'failed');
+  assert.equal(exhaustedJob.lockedAt, null);
+});
+

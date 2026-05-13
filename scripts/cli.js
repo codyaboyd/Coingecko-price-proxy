@@ -31,6 +31,9 @@ function printUsage() {
   console.log('  node scripts/cli.js export-history --asset <id> [--from <date>] [--to <date>] [--interval <5m|1h|1d>] [--vs <currency>] [--format <csv|json>] [--output <path>]');
   console.log('  node scripts/cli.js repair-gaps --asset <id> --from <date> --to <date> [--interval <5m|1h|1d>] [--vs <currency>]');
   console.log('  node scripts/cli.js queue-status');
+  console.log('  node scripts/cli.js jobs:list');
+  console.log('  node scripts/cli.js jobs:retry-failed');
+  console.log('  node scripts/cli.js jobs:clear-completed');
   console.log('  node scripts/cli.js maintenance:on');
   console.log('  node scripts/cli.js maintenance:off');
   console.log('  node scripts/cli.js cg-test <coingecko-id> <vs-currency>');
@@ -394,10 +397,66 @@ async function runRepairGaps(rawArgs) {
   }
 }
 
+function withScheduler(callback) {
+  const config = loadServerConfig();
+  const db = openConfiguredDatabase(config);
+
+  try {
+    runMigrations(db);
+    const scheduler = createScheduler({ db, config });
+    return callback(scheduler);
+  } finally {
+    db.close();
+  }
+}
+
+function formatJobForCli(job) {
+  const assetId = job.payload && job.payload.assetId ? job.payload.assetId : 'n/a';
+  const runAfter = job.runAfter ? new Date(job.runAfter).toISOString() : '';
+  const lockedAt = job.lockedAt ? new Date(job.lockedAt).toISOString() : '';
+  const error = job.lastError ? job.lastError.replace(/\s+/g, ' ').slice(0, 120) : '';
+  return [job.id, job.status, job.type, assetId, `${job.attempts}/${job.maxAttempts}`, runAfter, lockedAt, error].join('\t');
+}
+
+function runJobsList() {
+  return withScheduler((scheduler) => {
+    const jobs = scheduler.listJobs({ limit: 200 });
+
+    console.log('id\tstatus\ttype\tasset\tattempts\trun_after\tlocked_at\tlast_error');
+    jobs.forEach((job) => console.log(formatJobForCli(job)));
+    return jobs;
+  });
+}
+
+function runRetryFailedJobs() {
+  return withScheduler((scheduler) => {
+    const count = scheduler.retryFailedJobs();
+    console.log(`Queued ${count} failed job(s) for retry.`);
+    return count;
+  });
+}
+
+function runClearCompletedJobs() {
+  return withScheduler((scheduler) => {
+    const count = scheduler.clearCompletedJobs();
+    console.log(`Cleared ${count} completed job(s).`);
+    return count;
+  });
+}
+
 function runQueueStatus() {
-  console.log('Queue status is kept in the Express server process memory.');
-  console.log('This CLI process cannot inspect a running server queue without an IPC or HTTP status endpoint.');
-  console.log('Start the server and use the admin dashboard/API queue views for live in-memory queue status.');
+  return withScheduler((scheduler) => {
+    const status = scheduler.getStatus();
+    console.log(JSON.stringify({
+      depth: status.depth,
+      running: status.runningJobs.length,
+      failed: status.failedJobs.length,
+      queuedJobs: status.queuedJobs,
+      runningJobs: status.runningJobs,
+      failedJobs: status.failedJobs
+    }, null, 2));
+    return status;
+  });
 }
 
 function getPointCount(value) {
@@ -483,6 +542,21 @@ async function main(argv = process.argv.slice(2)) {
 
   if (command === 'queue-status') {
     runQueueStatus();
+    return;
+  }
+
+  if (command === 'jobs:list') {
+    runJobsList();
+    return;
+  }
+
+  if (command === 'jobs:retry-failed') {
+    runRetryFailedJobs();
+    return;
+  }
+
+  if (command === 'jobs:clear-completed') {
+    runClearCompletedJobs();
     return;
   }
 

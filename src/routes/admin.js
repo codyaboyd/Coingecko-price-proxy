@@ -1003,6 +1003,25 @@ router.post('/cache/clear', (req, res, next) => {
   }
 });
 
+
+router.post('/jobs/:id/retry', (req, res, next) => {
+  try {
+    const job = getScheduler(req).retryJob(Number(req.params.id));
+    redirectWithSchedulerAction(res, 'job-retried', job ? `Job #${job.id} queued for retry` : `Job #${req.params.id} was not retried`);
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.post('/jobs/:id/cancel', (req, res, next) => {
+  try {
+    const job = getScheduler(req).cancelJob(Number(req.params.id));
+    redirectWithSchedulerAction(res, 'job-cancelled', job ? `Job #${job.id} cancelled` : `Job #${req.params.id} was not cancellable`);
+  } catch (error) {
+    next(error);
+  }
+});
+
 router.post('/scheduler/pause', (req, res, next) => {
   try {
     getRecentRefreshScheduler(req).pause();
