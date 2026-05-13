@@ -115,6 +115,13 @@
         </div>
       <% } %>
 
+      <% if (bundleAction) { %>
+        <div class="alert alert-success alert-dismissible fade show" role="alert">
+          Portable bundle: <strong><%= bundleAction %></strong><% if (bundleDetails) { %> — <code><%= bundleDetails %></code><% } %>
+          <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+        </div>
+      <% } %>
+
       <div class="card shadow-sm mb-4">
         <div class="card-header bg-white d-flex align-items-center justify-content-between flex-wrap gap-2">
           <div>
@@ -436,6 +443,18 @@
         </section>
 
         <aside class="col-lg-4">
+          <div class="card shadow-sm mb-4">
+            <div class="card-header bg-white">
+              <h2 class="h5 mb-0">Migration</h2>
+            </div>
+            <div class="card-body">
+              <p class="text-secondary small">Create a portable tarball under <code>data/exports/</code> for moving this app to a new server. The real <code>.env</code> is excluded unless <code>EXPORT_ENV=1</code> is set before startup.</p>
+              <form method="post" action="/admin/portable-bundle/create" class="m-0">
+                <button type="submit" class="btn btn-primary">Create portable bundle</button>
+              </form>
+            </div>
+          </div>
+
           <div class="card shadow-sm">
             <div class="card-header bg-white">
               <h2 class="h5 mb-0">System</h2>

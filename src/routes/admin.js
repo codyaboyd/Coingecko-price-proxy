@@ -26,6 +26,7 @@ const { parseJsonText, rollbackConfigChange, saveConfigChange } = require('../se
 const { ADMIN_EVENT_ACTIONS, ADMIN_EVENT_ENTITY_TYPES, adminEventsToCsv, listAdminEventFacetValues, listAdminEvents, recordAdminEvent } = require('../services/admin-activity-service');
 const { createAlertsFromHealthReport, createAlertsFromIntegrityReport, listAlerts, updateAlertStatus } = require('../services/alert-service');
 const logger = require('../utils/logger');
+const { createPortableBundle } = require('../../scripts/create-portable-bundle');
 
 const router = express.Router();
 const MAX_IMPORT_FILE_BYTES = 50 * 1024 * 1024;
@@ -367,6 +368,16 @@ function getRecentRefreshScheduler(req) {
   }
 
   return scheduler;
+}
+
+function redirectWithBundleAction(res, action, details) {
+  const params = new URLSearchParams({ bundleAction: action });
+
+  if (details) {
+    params.set('bundleDetails', details);
+  }
+
+  res.redirect(`/admin?${params.toString()}`);
 }
 
 function redirectWithCacheAction(res, action, details) {
@@ -1636,6 +1647,25 @@ router.get('/assets/:id', (req, res, next) => {
   }
 });
 
+router.post('/portable-bundle/create', (req, res, next) => {
+  try {
+    const result = createPortableBundle({ rootDir: process.cwd(), env: process.env });
+    recordAdminEvent(req, {
+      action: 'portable bundle created',
+      entityType: 'backup',
+      entityId: result.archiveName,
+      details: {
+        fileName: result.archiveName,
+        path: result.relativeArchivePath,
+        sizeBytes: result.sizeBytes,
+        databaseSource: result.database.source
+      }
+    });
+    redirectWithBundleAction(res, 'created', `${result.relativeArchivePath} (${bytesToSummary(result.sizeBytes)})`);
+  } catch (error) {
+    next(error);
+  }
+});
 
 router.post('/cache/clear', (req, res, next) => {
   try {
@@ -1756,6 +1786,8 @@ router.get('/', (req, res, next) => {
       schedulerDetails: req.query.schedulerDetails || null,
       cacheAction: req.query.cacheAction || null,
       cacheDetails: req.query.cacheDetails || null,
+      bundleAction: req.query.bundleAction || null,
+      bundleDetails: req.query.bundleDetails || null,
       cacheStats,
       reloadStatus: {
         ...reloadStatus,
