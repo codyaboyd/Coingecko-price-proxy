@@ -39,3 +39,27 @@ code {
   white-space: pre-wrap;
   word-break: break-word;
 }
+
+.runbook-card h2,
+.runbook-card h3,
+.runbook-card h4,
+.runbook-card h5 {
+  margin-top: 1.75rem;
+}
+
+.runbook-card h2:first-child,
+.runbook-card h3:first-child {
+  margin-top: 0;
+}
+
+.runbook-card pre {
+  background: var(--bs-tertiary-bg);
+  border: 1px solid var(--bs-border-color);
+  border-radius: var(--bs-border-radius);
+  padding: 1rem;
+  white-space: pre-wrap;
+}
+
+.runbook-card code {
+  color: var(--bs-code-color);
+}

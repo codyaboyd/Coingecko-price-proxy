@@ -728,6 +728,102 @@ function readTextFileSafe(filePath) {
   return fs.readFileSync(resolveFromRoot(filePath), 'utf8');
 }
 
+function escapeHtml(value) {
+  return String(value || '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function renderInlineMarkdown(value) {
+  return escapeHtml(value)
+    .replace(/`([^`]+)`/g, '<code>$1</code>')
+    .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2">$1</a>')
+    .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+}
+
+function renderMarkdownDocument(markdown) {
+  const lines = String(markdown || '').split(/\r?\n/);
+  const html = [];
+  let inCodeBlock = false;
+  let codeLines = [];
+  let inList = false;
+  let paragraph = [];
+
+  function flushParagraph() {
+    if (paragraph.length > 0) {
+      html.push(`<p>${renderInlineMarkdown(paragraph.join(' '))}</p>`);
+      paragraph = [];
+    }
+  }
+
+  function closeList() {
+    if (inList) {
+      html.push('</ul>');
+      inList = false;
+    }
+  }
+
+  lines.forEach((line) => {
+    if (line.startsWith('```')) {
+      flushParagraph();
+      closeList();
+      if (inCodeBlock) {
+        html.push(`<pre><code>${escapeHtml(codeLines.join('\n'))}</code></pre>`);
+        codeLines = [];
+        inCodeBlock = false;
+      } else {
+        inCodeBlock = true;
+      }
+      return;
+    }
+
+    if (inCodeBlock) {
+      codeLines.push(line);
+      return;
+    }
+
+    const heading = line.match(/^(#{1,4})\s+(.+)$/);
+    if (heading) {
+      flushParagraph();
+      closeList();
+      const level = Math.min(heading[1].length + 1, 5);
+      html.push(`<h${level}>${renderInlineMarkdown(heading[2])}</h${level}>`);
+      return;
+    }
+
+    const listItem = line.match(/^[-*]\s+(.+)$/);
+    if (listItem) {
+      flushParagraph();
+      if (!inList) {
+        html.push('<ul>');
+        inList = true;
+      }
+      html.push(`<li>${renderInlineMarkdown(listItem[1])}</li>`);
+      return;
+    }
+
+    if (line.trim() === '') {
+      flushParagraph();
+      closeList();
+      return;
+    }
+
+    closeList();
+    paragraph.push(line.trim());
+  });
+
+  if (inCodeBlock) {
+    html.push(`<pre><code>${escapeHtml(codeLines.join('\n'))}</code></pre>`);
+  }
+
+  flushParagraph();
+  closeList();
+  return html.join('\n');
+}
+
 function buildSimpleDiff(oldText, newText) {
   const oldLines = oldText.split('\n');
   const newLines = newText.split('\n');
@@ -901,6 +997,22 @@ function validateAdminFetchRange(fromTs, toTs) {
 }
 
 
+
+router.get('/runbook', (req, res, next) => {
+  try {
+    const config = req.app.get('config');
+    const markdown = readTextFileSafe('docs/RUNBOOK.md');
+
+    res.render('admin-runbook', {
+      title: `${config.adminTitle} - Runbook`,
+      appName: config.appName,
+      markdown,
+      runbookHtml: renderMarkdownDocument(markdown)
+    });
+  } catch (error) {
+    next(error);
+  }
+});
 
 router.get('/alerts', (req, res, next) => {
   try {
