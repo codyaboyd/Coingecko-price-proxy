@@ -31,6 +31,13 @@ function start() {
   const { createScheduler } = require('./src/jobs/scheduler');
   const { createRecentRefreshScheduler } = require('./src/jobs/recent-refresh-scheduler');
   const { setGlobalAlertDatabase } = require('./src/services/alert-service');
+  const { getGlobalLimiter } = require('./src/utils/limiter');
+  const { getGlobalRateBudgetService } = require('./src/services/rate-budget-service');
+  const { configureCoinGeckoDefaults } = require('./src/services/coingecko');
+
+  configureCoinGeckoDefaults(config.coingecko);
+  getGlobalRateBudgetService(config.coingecko).configure(config.coingecko);
+  getGlobalLimiter(config.coingecko).configure(config.coingecko);
 
   const assets = loadAssets(config.assetsConfigPath);
   const db = initializeDatabase(config, { syncAssets: false });
@@ -41,7 +48,8 @@ function start() {
     db,
     jobScheduler,
     assets,
-    maintenanceMode: config.maintenanceMode
+    maintenanceMode: config.maintenanceMode,
+    config
   });
   const hotReloadManager = createHotReloadManager({
     app,

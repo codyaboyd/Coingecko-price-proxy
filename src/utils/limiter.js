@@ -31,6 +31,19 @@ class RateLimiter {
     this.rateBudget = options.rateBudget || getGlobalRateBudgetService({ maxCallsPerMinute: this.maxCallsPerMinute });
   }
 
+  configure(options = {}) {
+    if (options.maxCallsPerMinute !== undefined) {
+      this.maxCallsPerMinute = parsePositiveInteger(options.maxCallsPerMinute, this.maxCallsPerMinute);
+    }
+
+    if (this.rateBudget && typeof this.rateBudget.configure === 'function') {
+      this.rateBudget.configure(options);
+    }
+
+    this.processQueue();
+    return this.getStatus();
+  }
+
   getStatus(now = Date.now()) {
     this.removeExpiredCalls(now);
 

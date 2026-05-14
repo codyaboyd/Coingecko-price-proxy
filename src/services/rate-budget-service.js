@@ -134,6 +134,22 @@ class RateBudgetService {
     return this.safeMode && this.last429At ? 0 : null;
   }
 
+  configure(options = {}) {
+    if (options.maxCallsPerMinute !== undefined) {
+      this.maxCallsPerMinute = parsePositiveInteger(options.maxCallsPerMinute, this.maxCallsPerMinute);
+    }
+
+    if (options.safeMode !== undefined) {
+      this.safeMode = parseBoolean(options.safeMode, this.safeMode);
+    }
+
+    if (options.recoveryMs !== undefined) {
+      this.recoveryMs = parsePositiveInteger(options.recoveryMs, this.recoveryMs);
+    }
+
+    return this.getStatus();
+  }
+
   getStatus(now = Date.now()) {
     this.removeExpiredCalls(now);
     const effectiveMaxCallsPerMinute = this.getEffectiveMaxCallsPerMinute(now);

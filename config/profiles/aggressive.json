@@ -1,0 +1,20 @@
+{
+  "id": "aggressive",
+  "name": "Aggressive",
+  "description": "Faster refreshes and backfills while still routing all CoinGecko traffic through the configured rate limiter.",
+  "coingecko": {
+    "maxCallsPerMinute": 45,
+    "safeMode": true,
+    "rateLimitPauseMs": 60000,
+    "retries": 2,
+    "baseBackoffMs": 1000
+  },
+  "automation": {
+    "recentEveryMinutes": 15,
+    "dailyBackfill": true,
+    "maxBackfillDaysPerRun": 30,
+    "enable5m": false,
+    "failureThreshold": 3,
+    "failureCooldownMinutes": 10
+  }
+}

@@ -32,25 +32,25 @@ function isFiveMinuteEnabled(fetchPolicy) {
   return false;
 }
 
-function normalizeFetchPolicy(asset) {
+function normalizeFetchPolicy(asset, automation = {}) {
   const fetchPolicy = asset && asset.fetchPolicy && typeof asset.fetchPolicy === 'object'
     ? asset.fetchPolicy
     : {};
-  const recentEveryMinutes = normalizePositiveNumber(fetchPolicy.recentEveryMinutes, DEFAULT_RECENT_EVERY_MINUTES);
-  const maxBackfillDaysPerRun = normalizePositiveNumber(fetchPolicy.maxBackfillDaysPerRun, DEFAULT_MAX_BACKFILL_DAYS_PER_RUN);
+  const recentEveryMinutes = normalizePositiveNumber(automation.recentEveryMinutes ?? fetchPolicy.recentEveryMinutes, DEFAULT_RECENT_EVERY_MINUTES);
+  const maxBackfillDaysPerRun = normalizePositiveNumber(automation.maxBackfillDaysPerRun ?? fetchPolicy.maxBackfillDaysPerRun, DEFAULT_MAX_BACKFILL_DAYS_PER_RUN);
   const intervals = ['1h'];
 
-  if (isFiveMinuteEnabled(fetchPolicy)) {
+  if (automation.enable5m === true || (automation.enable5m !== false && isFiveMinuteEnabled(fetchPolicy))) {
     intervals.unshift('5m');
   }
 
-  if (fetchPolicy.dailyBackfill === true) {
+  if ((automation.dailyBackfill ?? fetchPolicy.dailyBackfill) === true) {
     intervals.push('1d');
   }
 
   return {
     recentEveryMinutes,
-    dailyBackfill: fetchPolicy.dailyBackfill === true,
+    dailyBackfill: (automation.dailyBackfill ?? fetchPolicy.dailyBackfill) === true,
     maxBackfillDaysPerRun,
     intervals
   };
@@ -178,7 +178,12 @@ function getIntervalStaleness(db, asset, interval, options = {}) {
   const staleAfterTs = now - staleAfterMs;
   const latestCompleteBucket = floorToUtcBoundary(interval, now - INTERVAL_STEPS_MS[interval]);
   const fetching = hasPendingRefresh(jobScheduler, asset.id, interval);
-  const failure = getFailureState(db, asset, interval, now, options);
+  const automation = options.config && options.config.automation ? options.config.automation : {};
+  const failure = getFailureState(db, asset, interval, now, {
+    ...options,
+    failureThreshold: options.failureThreshold ?? automation.failureThreshold,
+    failureCooldownMs: options.failureCooldownMs ?? (automation.failureCooldownMinutes === undefined ? undefined : Number(automation.failureCooldownMinutes) * MINUTE_MS)
+  });
   let status = 'fresh';
 
   if (failure.inCooldown) {
@@ -218,7 +223,7 @@ function getIntervalStaleness(db, asset, interval, options = {}) {
 
 function getAssetStaleness(db, asset, options = {}) {
   const checkedAt = options.now || Date.now();
-  const policy = normalizeFetchPolicy(asset);
+  const policy = normalizeFetchPolicy(asset, options.config && options.config.automation ? options.config.automation : {});
   const intervals = policy.intervals
     .map((interval) => getIntervalStaleness(db, asset, interval, options))
     .filter(Boolean);

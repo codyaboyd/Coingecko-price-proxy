@@ -1,0 +1,20 @@
+{
+  "id": "normal",
+  "name": "Normal",
+  "description": "Balanced defaults for routine operation with moderate refresh cadence and daily backfills.",
+  "coingecko": {
+    "maxCallsPerMinute": 20,
+    "safeMode": true,
+    "rateLimitPauseMs": 60000,
+    "retries": 2,
+    "baseBackoffMs": 1500
+  },
+  "automation": {
+    "recentEveryMinutes": 60,
+    "dailyBackfill": true,
+    "maxBackfillDaysPerRun": 10,
+    "enable5m": false,
+    "failureThreshold": 3,
+    "failureCooldownMinutes": 15
+  }
+}

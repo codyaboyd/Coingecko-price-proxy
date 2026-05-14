@@ -35,31 +35,31 @@ function isFiveMinuteEnabled(fetchPolicy) {
   return false;
 }
 
-function normalizeFetchPolicy(asset) {
+function normalizeFetchPolicy(asset, automation = {}) {
   const fetchPolicy = asset && asset.fetchPolicy && typeof asset.fetchPolicy === 'object'
     ? asset.fetchPolicy
     : {};
   const recentEveryMinutes = normalizePositiveNumber(
-    fetchPolicy.recentEveryMinutes,
+    automation.recentEveryMinutes ?? fetchPolicy.recentEveryMinutes,
     DEFAULT_RECENT_EVERY_MINUTES
   );
   const maxBackfillDaysPerRun = normalizePositiveNumber(
-    fetchPolicy.maxBackfillDaysPerRun,
+    automation.maxBackfillDaysPerRun ?? fetchPolicy.maxBackfillDaysPerRun,
     DEFAULT_MAX_BACKFILL_DAYS_PER_RUN
   );
   const intervals = ['1h'];
 
-  if (isFiveMinuteEnabled(fetchPolicy)) {
+  if (automation.enable5m === true || (automation.enable5m !== false && isFiveMinuteEnabled(fetchPolicy))) {
     intervals.unshift('5m');
   }
 
-  if (fetchPolicy.dailyBackfill === true) {
+  if ((automation.dailyBackfill ?? fetchPolicy.dailyBackfill) === true) {
     intervals.push('1d');
   }
 
   return {
     recentEveryMinutes,
-    dailyBackfill: fetchPolicy.dailyBackfill === true,
+    dailyBackfill: (automation.dailyBackfill ?? fetchPolicy.dailyBackfill) === true,
     maxBackfillDaysPerRun,
     intervals
   };
@@ -225,6 +225,7 @@ class RecentRefreshScheduler {
     this.paused = false;
     this.pauseReason = null;
     this.maintenanceMode = Boolean(options.maintenanceMode);
+    this.config = options.config || {};
     this.timer = null;
     this.startedAt = null;
     this.lastRunAt = null;
@@ -234,7 +235,7 @@ class RecentRefreshScheduler {
   }
 
   buildAssetState(asset, now) {
-    const policy = normalizeFetchPolicy(asset);
+    const policy = normalizeFetchPolicy(asset, this.config.automation || {});
     const intervals = {};
 
     policy.intervals.forEach((interval) => {
@@ -253,6 +254,11 @@ class RecentRefreshScheduler {
       lastRunJobCount: 0,
       lastError: null
     };
+  }
+
+  reloadConfig(config = {}) {
+    this.config = config || {};
+    return this.reloadAssets(this.assets);
   }
 
   reloadAssets(assets) {
@@ -422,7 +428,9 @@ class RecentRefreshScheduler {
       const everyMs = getIntervalEveryMs(interval, state.policy);
       const staleness = getIntervalStaleness(this.db, state.asset, interval, {
         now,
-        jobScheduler: this.jobScheduler
+        jobScheduler: this.jobScheduler,
+        failureThreshold: this.config.automation && this.config.automation.failureThreshold,
+        failureCooldownMs: this.config.automation && Number(this.config.automation.failureCooldownMinutes) * 60 * 1000
       });
       const skippedForCooldown = staleness && staleness.failure && staleness.failure.inCooldown;
       const shouldRepair = staleness && ['stale', 'empty'].includes(staleness.status);

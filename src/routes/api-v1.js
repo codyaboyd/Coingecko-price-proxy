@@ -437,7 +437,7 @@ router.get('/admin/assets/:assetId/staleness', (req, res, next) => {
 
     res.json({
       asset: { id: asset.id, symbol: asset.symbol, vsCurrency: asset.vsCurrency },
-      staleness: getAssetStaleness(db, getConfiguredAssetForStaleness(req, asset), { jobScheduler: getScheduler(req) })
+      staleness: getAssetStaleness(db, getConfiguredAssetForStaleness(req, asset), { jobScheduler: getScheduler(req), config: req.app.get('config') })
     });
   } catch (error) {
     next(error);
