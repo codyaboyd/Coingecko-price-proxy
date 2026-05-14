@@ -80,7 +80,7 @@ logs/
 
 CoinGecko counts failed requests against the rate limit, so the fetch system includes a conservative budget planner. Configure these environment variables in `.env` or the process environment:
 
-- `COINGECKO_MAX_CALLS_PER_MINUTE` - configured CoinGecko request budget; defaults to `20`.
+- `COINGECKO_MAX_CALLS_PER_MINUTE` - configured CoinGecko request budget; defaults to `8` for conservative free-tier operation.
 - `COINGECKO_SAFE_MODE=true` - enables conservative behavior. After any `429` response the effective rate drops to 50% and slowly recovers over time, and internal request retries are kept deliberately low.
 
 The admin planner is available at `/admin/rate-budget` and shows calls used this minute, safe remaining calls, projected queued work, estimated drain time, and assets that are expensive to backfill. Manual backfill controls also warn before queueing large call-consuming work.
@@ -183,9 +183,9 @@ The suite checks that configuration loads, migrations apply, assets validate, fa
 - `npm run bundle` - create a portable migration bundle under `data/exports/chrono-cache-bundle-YYYY-MM-DD-HH-mm-ss.tar.gz`.
 - `npm run export-history -- --asset btc --format csv` - export stored candle history.
 - `npm run repair-gaps -- --asset btc --from 2025-01-01 --to 2025-01-31 --interval 1d` - enqueue and run gap repair fetch jobs in the CLI process.
-- `npm run queue-status` - print the CLI limitation for inspecting the in-memory server queue.
-- `npm run import` - placeholder for future import tooling.
-- `npm run convert` - placeholder for future conversion tooling.
+- `npm run queue-status` - print persisted scheduler queue counts from SQLite.
+- `npm run import -- ./data/imports/converted/btc-old.normalized.json --policy fill_only_missing` - import normalized historical candles.
+- `npm run convert -- ./data/imports/btc-old.csv --asset btc --vs usd --interval 1d --output data/imports/converted/btc-old.normalized.json` - convert CSV/JSON dumps to normalized import JSON.
 - `npm run backup` - alias for `npm run backup-db`.
 - `npm run restore -- ./data/backups/history-YYYY-MM-DD-HH-mm-ss.sqlite` - safely restore a backup from `data/backups`.
 
@@ -370,7 +370,7 @@ node scripts/cli.js repair-gaps --asset btc --from 2025-01-01 --to 2025-01-31 --
 
 ### `queue-status`
 
-Print the queue-status limitation. The queue is stored in the Express server process memory, so this standalone CLI cannot inspect live queue state without an IPC or HTTP queue-status endpoint. Use the admin dashboard/API queue views while the server is running for live status.
+Print persisted scheduler queue counts from SQLite. Use the admin dashboard/API for live in-process details while the server is running.
 
 ```bash
 node scripts/cli.js queue-status
@@ -382,7 +382,7 @@ npm run queue-status
 - `.env.example` documents supported environment variables, including `APP_NAME`, `LOG_LEVEL`, admin authentication credentials, and path overrides.
 - `config/server.json` contains default server settings.
 - `config/assets.json` contains BTC and ETH examples. Each asset must define `id`, `symbol`, `name`, `coingeckoId`, `vsCurrency`, `enabled`, and `priority`.
-- `src/utils/env.js` loads `.env` with `dotenv` and validates required runtime configuration.
+- `src/utils/env.js` loads `.env` with `dotenv`; when `.env` is absent it falls back to `.env.example` so a fresh checkout can run, but production should use a real `.env` with strong admin credentials.
 - `src/utils/logger.js` provides simple leveled logging with `debug`, `info`, `warn`, and `error`.
 
 ## Notes
@@ -530,7 +530,7 @@ Import preview and import execution resolve real paths and reject absolute paths
 
 ### Backfill Workflow
 
-Use the admin asset page or the authenticated admin API to find gaps and enqueue backfill jobs. Backfill requests validate dates, interval, quote currency, conflict policy, maximum range, and maximum job count before queueing work. Jobs run in process memory and call CoinGecko through the shared limiter, so restarts clear queued jobs that have not started.
+Use the admin asset page or the authenticated admin API to find gaps and enqueue backfill jobs. Backfill requests validate dates, interval, quote currency, conflict policy, maximum range, and maximum job count before queueing work. Jobs are persisted in SQLite and call CoinGecko through the shared limiter; queued work survives restarts, and stale running jobs are recovered by the scheduler.
 
 Example admin API request after login/session setup:
 
@@ -548,4 +548,4 @@ curl -X POST http://127.0.0.1:3000/api/v1/admin/assets/btc/backfill \
 - **CoinGecko requests fail or return `429`:** verify API key type/key, reduce `COINGECKO_MAX_CALLS_PER_MINUTE`, and review scheduler recent failures in the admin dashboard.
 - **Import preview fails:** ensure the file is inside `data/imports`, is not a symlink outside that directory, is below the admin import size cap, and contains supported CSV/JSON columns.
 - **Backfill queues too many jobs:** narrow the date range, use a coarser interval, or increase chunk size intentionally in code/config before retrying.
-- **No live queue from CLI:** the scheduler is in-memory inside the server process; use the admin dashboard/API for live queue status.
+- **Queue status looks different between CLI and admin:** the CLI reads persisted SQLite jobs, while the admin dashboard can also show live in-process scheduler state.

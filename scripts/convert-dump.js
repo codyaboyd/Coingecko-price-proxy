@@ -1,10 +1,14 @@
 #!/usr/bin/env node
 
+const fs = require('fs');
+const path = require('path');
+
 const { convertDumpFile } = require('../src/services/import-service');
 
 function printUsage() {
   console.log('Usage:');
   console.log('  npm run convert -- ./data/imports/file.csv --asset btc --vs usd --interval 1d');
+  console.log('  npm run convert -- ./data/imports/file.csv --asset btc --vs usd --interval 1d --output ./data/imports/converted/file.normalized.json');
   console.log('Options:');
   console.log('  --asset <id>              Required asset id for output metadata.');
   console.log('  --symbol <symbol>         Optional symbol; defaults to --asset.');
@@ -13,6 +17,7 @@ function printUsage() {
   console.log('  --timestamp-unit <unit>   ms, s, or auto; defaults to auto.');
   console.log('  --timezone <timezone>     utc only; defaults to utc.');
   console.log('  --source <source>         Output source; defaults to import.');
+  console.log('  --output <path>          Optional destination path. If omitted, JSON is written to stdout.');
 }
 
 function toOptionKey(flag) {
@@ -72,9 +77,22 @@ function main() {
     return;
   }
 
+  const outputPath = parsed.options.output;
+  delete parsed.options.output;
+
   const { output, report } = convertDumpFile(parsed.inputPath, parsed.options);
+  const outputJson = `${JSON.stringify(output, null, 2)}\n`;
   printReport(report);
-  process.stdout.write(`${JSON.stringify(output, null, 2)}\n`);
+
+  if (outputPath) {
+    const resolvedOutputPath = path.resolve(process.cwd(), outputPath);
+    fs.mkdirSync(path.dirname(resolvedOutputPath), { recursive: true });
+    fs.writeFileSync(resolvedOutputPath, outputJson);
+    console.error(`Wrote normalized history JSON to ${resolvedOutputPath}`);
+    return;
+  }
+
+  process.stdout.write(outputJson);
 }
 
 try {

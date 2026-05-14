@@ -1,3 +1,4 @@
+const fs = require('fs');
 const path = require('path');
 const dotenv = require('dotenv');
 
@@ -54,7 +55,14 @@ function loadEnv(options = {}) {
     return cachedEnv;
   }
 
-  dotenv.config({ path: options.envPath || path.resolve(process.cwd(), '.env') });
+  const primaryEnvPath = options.envPath || path.resolve(process.cwd(), '.env');
+  const fallbackEnvPath = path.resolve(process.cwd(), '.env.example');
+
+  if (options.envPath || fs.existsSync(primaryEnvPath)) {
+    dotenv.config({ path: primaryEnvPath });
+  } else if (fs.existsSync(fallbackEnvPath)) {
+    dotenv.config({ path: fallbackEnvPath });
+  }
 
   const configDir = readString('CONFIG_DIR', './config');
   const dataDir = readString('DATA_DIR', './data');

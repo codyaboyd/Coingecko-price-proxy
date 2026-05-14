@@ -155,7 +155,7 @@ async function readResponseText(response) {
 }
 
 function createCoinGeckoClient(options = {}) {
-  const baseUrl = normalizeBaseUrl(options.baseUrl || process.env.COINGECKO_API_BASE);
+  const baseUrl = normalizeBaseUrl(getCoinGeckoRuntimeValue(options, 'baseUrl', 'COINGECKO_API_BASE', DEFAULT_API_BASE));
   const apiKey = options.apiKey || process.env.COINGECKO_API_KEY || '';
   const apiKeyType = normalizeApiKeyType(options.apiKeyType || process.env.COINGECKO_API_KEY_TYPE || (apiKey ? 'demo' : 'none'));
   const timeoutMs = parsePositiveInteger(getCoinGeckoRuntimeValue(options, 'timeoutMs', 'COINGECKO_TIMEOUT_MS', DEFAULT_TIMEOUT_MS), DEFAULT_TIMEOUT_MS);

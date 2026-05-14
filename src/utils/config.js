@@ -3,8 +3,10 @@ const { readJsonFile } = require('./files');
 const { loadEnv } = require('./env');
 
 const DEFAULT_COINGECKO_CONFIG = {
+  baseUrl: 'https://api.coingecko.com/api/v3',
   maxCallsPerMinute: 8,
   safeMode: true,
+  timeoutMs: 15000,
   rateLimitPauseMs: 120000,
   retries: 1,
   baseBackoffMs: 3000
@@ -36,6 +38,92 @@ function normalizeObjectConfig(value, defaults) {
   };
 }
 
+function parseBoolean(value) {
+  if (value === undefined || value === null || String(value).trim() === '') {
+    return null;
+  }
+
+  const normalized = String(value).trim().toLowerCase();
+
+  if (['1', 'true', 'yes', 'on'].includes(normalized)) {
+    return true;
+  }
+
+  if (['0', 'false', 'no', 'off'].includes(normalized)) {
+    return false;
+  }
+
+  throw new Error(`Boolean configuration value must be true or false. Received: ${value}`);
+}
+
+function parseOptionalPositiveInteger(value, name) {
+  if (value === undefined || value === null || String(value).trim() === '') {
+    return null;
+  }
+
+  const parsed = Number(value);
+
+  if (!Number.isInteger(parsed) || parsed < 1) {
+    throw new Error(`${name} must be an integer greater than or equal to 1. Received: ${value}`);
+  }
+
+  return parsed;
+}
+
+function parseOptionalNonNegativeInteger(value, name) {
+  if (value === undefined || value === null || String(value).trim() === '') {
+    return null;
+  }
+
+  const parsed = Number(value);
+
+  if (!Number.isInteger(parsed) || parsed < 0) {
+    throw new Error(`${name} must be an integer greater than or equal to 0. Received: ${value}`);
+  }
+
+  return parsed;
+}
+
+function buildCoinGeckoConfig(fileConfig) {
+  const coingecko = normalizeObjectConfig(fileConfig.coingecko, DEFAULT_COINGECKO_CONFIG);
+  const safeMode = parseBoolean(process.env.COINGECKO_SAFE_MODE);
+  const maxCallsPerMinute = parseOptionalPositiveInteger(process.env.COINGECKO_MAX_CALLS_PER_MINUTE, 'COINGECKO_MAX_CALLS_PER_MINUTE');
+  const timeoutMs = parseOptionalPositiveInteger(process.env.COINGECKO_TIMEOUT_MS, 'COINGECKO_TIMEOUT_MS');
+  const rateLimitPauseMs = parseOptionalPositiveInteger(process.env.COINGECKO_RATE_LIMIT_PAUSE_MS, 'COINGECKO_RATE_LIMIT_PAUSE_MS');
+  const retries = parseOptionalNonNegativeInteger(process.env.COINGECKO_RETRIES, 'COINGECKO_RETRIES');
+  const baseBackoffMs = parseOptionalPositiveInteger(process.env.COINGECKO_BACKOFF_MS, 'COINGECKO_BACKOFF_MS');
+
+  if (process.env.COINGECKO_API_BASE) {
+    coingecko.baseUrl = process.env.COINGECKO_API_BASE;
+  }
+
+  if (maxCallsPerMinute !== null) {
+    coingecko.maxCallsPerMinute = maxCallsPerMinute;
+  }
+
+  if (safeMode !== null) {
+    coingecko.safeMode = safeMode;
+  }
+
+  if (timeoutMs !== null) {
+    coingecko.timeoutMs = timeoutMs;
+  }
+
+  if (rateLimitPauseMs !== null) {
+    coingecko.rateLimitPauseMs = rateLimitPauseMs;
+  }
+
+  if (retries !== null) {
+    coingecko.retries = retries;
+  }
+
+  if (baseBackoffMs !== null) {
+    coingecko.baseBackoffMs = baseBackoffMs;
+  }
+
+  return coingecko;
+}
+
 function loadServerConfig() {
   const env = loadEnv();
   const serverConfigPath = path.join(env.configDir, 'server.json');
@@ -60,7 +148,7 @@ function loadServerConfig() {
     assetsConfigPath: process.env.ASSETS_CONFIG_PATH || fileConfig.assetsConfigPath || env.assetsConfigPath,
     maintenanceMode: fileConfig.maintenanceMode === true,
     profile: fileConfig.profile || 'conservative',
-    coingecko: normalizeObjectConfig(fileConfig.coingecko, DEFAULT_COINGECKO_CONFIG),
+    coingecko: buildCoinGeckoConfig(fileConfig),
     automation: normalizeObjectConfig(fileConfig.automation, DEFAULT_AUTOMATION_CONFIG)
   };
 }
