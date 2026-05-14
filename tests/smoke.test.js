@@ -21,6 +21,7 @@ const { loadServerConfig } = require('../src/utils/config');
 const { createScheduler } = require('../src/jobs/scheduler');
 const { buildAdminDoctorReport } = require('../src/services/admin-doctor-service');
 const { clearLogFile, listLogFiles, readLatestLogLines, resolveLogFile, writeLog } = require('../src/services/log-service');
+const { createCleanupService } = require('../src/services/cleanup-service');
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const FIXTURE_CSV = path.join(process.cwd(), 'test-fixtures', 'sample-history.csv');
@@ -75,6 +76,49 @@ test('log service rotates, filters, clears, and rejects unsafe paths', (t) => {
   assert.throws(() => clearLogFile('server.log', 'NOPE', { logDir }), /Type CLEAR/);
   clearLogFile('server.log', 'CLEAR', { logDir });
   assert.deepEqual(readLatestLogLines('server.log', { logDir }), []);
+});
+
+
+test('cleanup service prunes operational data without deleting candle history', (t) => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'chrono-cache-cleanup-'));
+  t.after(() => fs.rmSync(tempDir, { recursive: true, force: true }));
+  const db = openDatabase(path.join(tempDir, 'history.sqlite'));
+  t.after(() => db.close());
+  runMigrations(db);
+  upsertAssets(db, TEST_ASSETS, Date.UTC(2026, 0, 1));
+
+  const now = Date.UTC(2026, 0, 20);
+  insertCandles([
+    { ts: Date.UTC(2026, 0, 1), open: 1, high: 2, low: 1, close: 2, volume: 10 }
+  ], { db, assetId: 'btc', vsCurrency: 'usd', interval: '1d', fetchedAt: now });
+  db.prepare(`
+    INSERT INTO api_cache (cache_key, response_json, status_code, expires_at, created_at, updated_at)
+    VALUES ('expired', '{}', 200, @expiresAt, @createdAt, @createdAt)
+  `).run({ expiresAt: now - DAY_MS, createdAt: now - (2 * DAY_MS) });
+  db.prepare(`
+    INSERT INTO jobs (type, payload_json, priority, status, attempts, max_attempts, run_after, created_at, updated_at)
+    VALUES ('noop', '{}', 100, 'completed', 1, 3, @createdAt, @createdAt, @updatedAt)
+  `).run({ createdAt: now - (20 * DAY_MS), updatedAt: now - (15 * DAY_MS) });
+
+  const importsDir = path.join(tempDir, 'imports');
+  fs.mkdirSync(importsDir, { recursive: true });
+  const importPath = path.join(importsDir, 'done.csv');
+  fs.writeFileSync(importPath, 'ts,close\n2026-01-01,2\n');
+  const importFile = registerImportFile(db, importPath, { now: now - DAY_MS });
+  updateImportFile(db, importFile.id, { status: 'imported', rowsImported: 1, updatedAt: now - DAY_MS });
+
+  const service = createCleanupService({ db, config: { dataDir: tempDir, logDir: path.join(tempDir, 'logs') } });
+  const result = service.run({ now });
+
+  assert.equal(result.status, 'completed');
+  assert.equal(result.summary.apiCache.rowsDeleted, 1);
+  assert.equal(result.summary.completedJobs.rowsDeleted, 1);
+  assert.equal(result.summary.importedFiles.archived, 1);
+  assert.equal(result.summary.historicalCandlesDeleted, 0);
+  assert.equal(db.prepare('SELECT COUNT(*) AS count FROM candles').get().count, 1);
+  assert.equal(db.prepare('SELECT COUNT(*) AS count FROM api_cache').get().count, 0);
+  assert.equal(db.prepare('SELECT COUNT(*) AS count FROM jobs').get().count, 0);
+  assert.equal(db.prepare("SELECT status FROM import_files WHERE id = ?").get(importFile.id).status, 'archived');
 });
 
 test('config loads from the default server config', () => {
