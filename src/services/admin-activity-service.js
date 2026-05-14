@@ -12,6 +12,7 @@ const ADMIN_EVENT_ACTIONS = [
   'backup deleted',
   'restore attempted',
   'import run',
+  'cleanup run',
   'job retry',
   'job cancel'
 ];
@@ -24,7 +25,8 @@ const ADMIN_EVENT_ENTITY_TYPES = [
   'backup',
   'restore',
   'import',
-  'job'
+  'job',
+  'system'
 ];
 
 function getRequestIp(req) {

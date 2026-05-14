@@ -233,6 +233,23 @@ const MIGRATIONS = [
       CREATE INDEX IF NOT EXISTS idx_import_files_hash
         ON import_files(file_hash);
     `
+  },
+  {
+    version: 10,
+    name: 'add_cleanup_runs',
+    up: `
+      CREATE TABLE IF NOT EXISTS cleanup_runs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        started_at INTEGER NOT NULL,
+        finished_at INTEGER,
+        status TEXT NOT NULL CHECK (status IN ('running', 'completed', 'failed')),
+        summary_json TEXT,
+        error TEXT
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_cleanup_runs_finished
+        ON cleanup_runs(finished_at DESC, id DESC);
+    `
   }
 ];
 

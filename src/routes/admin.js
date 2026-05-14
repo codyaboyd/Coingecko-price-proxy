@@ -9,6 +9,7 @@ const { convertDumpFile, getImportFile, importNormalizedHistoryFile, listImportF
 const { ensureDirectory, resolveFromRoot } = require('../utils/files');
 const { enqueueBackfill } = require('../jobs/backfill-job');
 const { createScheduler } = require('../jobs/scheduler');
+const { createCleanupScheduler } = require('../jobs/cleanup-scheduler');
 const { buildRecentRefreshJobs, createRecentRefreshScheduler, normalizeFetchPolicy } = require('../jobs/recent-refresh-scheduler');
 const { clearApiCache, getApiCacheStats } = require('../services/api-cache');
 const { createBackupService } = require('../services/backup-service');
@@ -355,6 +356,46 @@ function getScheduler(req) {
   return scheduler;
 }
 
+
+
+function getCleanupScheduler(req) {
+  let scheduler = req.app.get('cleanupScheduler');
+
+  if (!scheduler) {
+    scheduler = createCleanupScheduler({ db: getDatabase(req), config: req.app.get('config'), app: req.app });
+    scheduler.start();
+    req.app.set('cleanupScheduler', scheduler);
+  }
+
+  return scheduler;
+}
+
+function redirectWithCleanupAction(res, action, details) {
+  const params = new URLSearchParams({ cleanupAction: action });
+
+  if (details) {
+    params.set('cleanupDetails', details);
+  }
+
+  res.redirect(`/admin/cleanup?${params.toString()}`);
+}
+
+function formatCleanupSummary(summary) {
+  if (!summary) {
+    return [];
+  }
+
+  return [
+    { label: 'Expired API cache rows pruned', value: summary.apiCache ? summary.apiCache.rowsDeleted : 0 },
+    { label: 'Completed jobs cleared', value: summary.completedJobs ? summary.completedJobs.rowsDeleted : 0 },
+    { label: 'Log files rotated', value: summary.logs && Array.isArray(summary.logs.rotatedFiles) ? summary.logs.rotatedFiles.length : 0 },
+    { label: 'Backups pruned', value: summary.backups ? summary.backups.pruned : 0 },
+    { label: 'Backup files deleted', value: summary.backups ? summary.backups.deletedFiles : 0 },
+    { label: 'Imported files archived', value: summary.importedFiles ? summary.importedFiles.archived : 0 },
+    { label: 'Stale alerts resolved', value: summary.alerts ? summary.alerts.resolved : 0 },
+    { label: 'Raw historical candle rows deleted', value: summary.historicalCandlesDeleted || 0 }
+  ];
+}
 
 function getRecentRefreshScheduler(req) {
   let scheduler = req.app.get('recentRefreshScheduler');
@@ -1140,6 +1181,45 @@ router.post('/imports/archive', (req, res, next) => {
   }
 });
 
+
+
+router.get('/cleanup', (req, res, next) => {
+  try {
+    const config = req.app.get('config');
+    const cleanupScheduler = getCleanupScheduler(req);
+    const status = cleanupScheduler.getStatus();
+    const lastRun = status.lastRun;
+
+    res.render('admin-cleanup', {
+      title: `${config.adminTitle} - Cleanup`,
+      appName: config.appName,
+      cleanup: {
+        ...status,
+        lastRun,
+        summaryItems: formatCleanupSummary(lastRun && lastRun.summary)
+      },
+      cleanupAction: req.query.cleanupAction || null,
+      cleanupDetails: req.query.cleanupDetails || null
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.post('/cleanup/run', async (req, res, next) => {
+  try {
+    const result = await getCleanupScheduler(req).runNow({ manual: true });
+    recordAdminEvent(req, {
+      action: 'cleanup run',
+      entityType: 'system',
+      entityId: 'cleanup',
+      details: { status: result.status, summary: result.summary }
+    });
+    redirectWithCleanupAction(res, 'completed', `Run #${result.id} completed.`);
+  } catch (error) {
+    next(error);
+  }
+});
 
 router.get('/backups', (req, res, next) => {
   try {

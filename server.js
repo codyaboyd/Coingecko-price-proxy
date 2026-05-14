@@ -30,6 +30,7 @@ function start() {
   const { createHotReloadManager } = require('./src/services/hot-reload');
   const { createScheduler } = require('./src/jobs/scheduler');
   const { createRecentRefreshScheduler } = require('./src/jobs/recent-refresh-scheduler');
+  const { createCleanupScheduler } = require('./src/jobs/cleanup-scheduler');
   const { setGlobalAlertDatabase } = require('./src/services/alert-service');
   const { getGlobalLimiter } = require('./src/utils/limiter');
   const { getGlobalRateBudgetService } = require('./src/services/rate-budget-service');
@@ -51,6 +52,7 @@ function start() {
     maintenanceMode: config.maintenanceMode,
     config
   });
+  const cleanupScheduler = createCleanupScheduler({ db, config, app });
   const hotReloadManager = createHotReloadManager({
     app,
     db,
@@ -66,9 +68,11 @@ function start() {
   app.set('assets', assets);
   app.set('jobScheduler', jobScheduler);
   app.set('recentRefreshScheduler', recentRefreshScheduler);
+  app.set('cleanupScheduler', cleanupScheduler);
   app.set('hotReloadManager', hotReloadManager);
   recentRefreshScheduler.start();
   jobScheduler.startDailyBackupJob();
+  cleanupScheduler.start();
   jobScheduler.process();
   hotReloadManager.reloadAssetsConfig();
   hotReloadManager.start();
@@ -88,6 +92,7 @@ function start() {
     logger.info(`${signal} received, shutting down ${config.appName}`);
     recentRefreshScheduler.stopTimer();
     jobScheduler.stopDailyBackupJob();
+    cleanupScheduler.stop();
     Promise.resolve(hotReloadManager.stop()).finally(() => {
       server.close(() => {
         setGlobalAlertDatabase(null);
