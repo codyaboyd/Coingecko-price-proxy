@@ -335,6 +335,27 @@ test('asset sync hides disabled and removed assets from public API lookups', (t)
   assert.equal(getPublicAsset(db, 'btc'), null);
 });
 
+test('convert CLI writes normalized JSON with --output', (t) => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'chrono-cache-convert-cli-'));
+  t.after(() => fs.rmSync(tempDir, { recursive: true, force: true }));
+  const outputPath = path.join(tempDir, 'sample.normalized.json');
+
+  execFileSync(process.execPath, [
+    'scripts/convert.js',
+    FIXTURE_CSV,
+    '--asset', 'btc',
+    '--symbol', 'BTC',
+    '--vs', 'usd',
+    '--interval', '1d',
+    '--output', outputPath
+  ], { cwd: process.cwd(), encoding: 'utf8' });
+
+  const normalized = JSON.parse(fs.readFileSync(outputPath, 'utf8'));
+  assert.equal(normalized.assetId, 'btc');
+  assert.equal(normalized.candles.length, 3);
+  assert.equal(normalized.candles[0].close, 42500);
+});
+
 test('import converter handles a sample CSV fixture', () => {
   const { output, report } = convertDumpFile(FIXTURE_CSV, {
     asset: 'btc',

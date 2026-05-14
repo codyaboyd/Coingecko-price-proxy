@@ -119,7 +119,7 @@ Put source files under `data/imports/`.
 cd /path/to/Coingecko-price-proxy
 mkdir -p data/imports data/imports/converted
 cp /path/to/old-btc-history.csv data/imports/btc-old.csv
-npm run convert -- ./data/imports/btc-old.csv --asset btc --vs usd --interval 1d > data/imports/converted/btc-old.normalized.json
+npm run convert -- ./data/imports/btc-old.csv --asset btc --vs usd --interval 1d --output data/imports/converted/btc-old.normalized.json
 head -n 40 data/imports/converted/btc-old.normalized.json
 npm run backup-db
 npm run import -- ./data/imports/converted/btc-old.normalized.json --policy fill_only_missing
