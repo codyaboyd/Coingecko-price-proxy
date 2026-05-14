@@ -1,0 +1,373 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title><%= title %></title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="/public/css/app.css" rel="stylesheet">
+  </head>
+  <body>
+    <nav class="navbar navbar-expand-lg bg-dark navbar-dark">
+      <div class="container">
+        <a class="navbar-brand" href="/admin"><%= appName %></a>
+        <div class="navbar-nav ms-auto">
+          <a class="nav-link active" href="/admin/assets">Assets</a>
+          <a class="nav-link" href="/admin/system-health">System Health</a>
+          <a class="nav-link" href="/admin/logs">Logs</a>
+          <a class="nav-link" href="/admin/api-test">API Test</a>
+          <%- include('admin-alert-bell') %>
+          <a class="nav-link" href="/admin/logout">Logout</a>
+        </div>
+      </div>
+    </nav>
+
+    <%- include('admin-maintenance-banner') %>
+
+    <main class="container py-5">
+      <div class="d-flex justify-content-between align-items-start flex-wrap gap-3 mb-4">
+        <div>
+          <h1 class="display-6 fw-bold mb-1">Add an asset</h1>
+          <p class="lead text-body-secondary mb-0">A fast Bootstrap 5 wizard for validating CoinGecko and safely writing <code>config/assets.json</code>.</p>
+        </div>
+        <a class="btn btn-outline-secondary" href="/admin/assets">Back to assets</a>
+      </div>
+
+      <% if (alert && message) { %>
+        <div class="alert alert-<%= alert %> alert-dismissible fade show" role="alert">
+          <%= message %>
+          <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+        </div>
+      <% } %>
+
+      <div id="wizardAlert" class="alert d-none" role="alert"></div>
+
+      <form id="assetWizard" method="post" action="/admin/assets/new" class="card shadow-sm">
+        <div class="card-header bg-white">
+          <div class="progress" role="progressbar" aria-label="Wizard progress" aria-valuemin="0" aria-valuemax="100">
+            <div id="wizardProgress" class="progress-bar" style="width: 14%">Step 1 of 7</div>
+          </div>
+        </div>
+        <div class="card-body">
+          <ol class="nav nav-pills nav-fill gap-2 mb-4 small" id="stepList">
+            <li class="nav-item"><span class="nav-link active">1 Symbol</span></li>
+            <li class="nav-item"><span class="nav-link disabled">2 CoinGecko</span></li>
+            <li class="nav-item"><span class="nav-link disabled">3 Test</span></li>
+            <li class="nav-item"><span class="nav-link disabled">4 Currency</span></li>
+            <li class="nav-item"><span class="nav-link disabled">5 Policy</span></li>
+            <li class="nav-item"><span class="nav-link disabled">6 Save</span></li>
+            <li class="nav-item"><span class="nav-link disabled">7 Backfill</span></li>
+          </ol>
+
+          <section class="wizard-step" data-step="0">
+            <h2 class="h4">1. Enter symbol/name</h2>
+            <p class="text-body-secondary">Start with the exchange-style symbol and the human-readable name. The asset ID is auto-generated but editable.</p>
+            <div class="row g-3">
+              <div class="col-md-3">
+                <label class="form-label" for="symbol">Symbol</label>
+                <input class="form-control form-control-lg text-uppercase" id="symbol" name="symbol" placeholder="SOL" autocomplete="off" required>
+              </div>
+              <div class="col-md-5">
+                <label class="form-label" for="name">Name</label>
+                <input class="form-control form-control-lg" id="name" name="name" placeholder="Solana" autocomplete="off" required>
+              </div>
+              <div class="col-md-4">
+                <label class="form-label" for="id">Asset ID</label>
+                <input class="form-control form-control-lg" id="id" name="id" placeholder="sol" autocomplete="off" required>
+                <div class="form-text">Used in URLs and local history keys. Must be unique.</div>
+              </div>
+            </div>
+          </section>
+
+          <section class="wizard-step d-none" data-step="1">
+            <h2 class="h4">2. Enter CoinGecko ID</h2>
+            <p class="text-body-secondary">Use the CoinGecko slug from the asset page URL, for example <code>solana</code>.</p>
+            <label class="form-label" for="coingeckoId">CoinGecko ID</label>
+            <input class="form-control form-control-lg" id="coingeckoId" name="coingeckoId" placeholder="solana" autocomplete="off" required>
+            <div class="form-text">This also must be unique in your configured assets.</div>
+          </section>
+
+          <section class="wizard-step d-none" data-step="2">
+            <h2 class="h4">3. Test CoinGecko fetch</h2>
+            <p class="text-body-secondary">One click validates duplicates, checks CoinGecko metadata, and fetches a tiny recent price sample.</p>
+            <button type="button" id="testCoinGecko" class="btn btn-primary btn-lg">Test CoinGecko now</button>
+            <span id="testSpinner" class="spinner-border spinner-border-sm ms-2 d-none" aria-hidden="true"></span>
+            <pre id="testResult" class="bg-body-tertiary border rounded p-3 mt-3 mb-0 small" style="white-space: pre-wrap; min-height: 8rem;">Not tested yet.</pre>
+          </section>
+
+          <section class="wizard-step d-none" data-step="3">
+            <h2 class="h4">4. Choose vsCurrency</h2>
+            <p class="text-body-secondary">Pick the default quote currency for local API responses and scheduled fetches.</p>
+            <div class="row g-3 align-items-end">
+              <div class="col-md-4">
+                <label class="form-label" for="vsCurrency">vsCurrency</label>
+                <input class="form-control form-control-lg text-lowercase" id="vsCurrency" name="vsCurrency" value="<%= defaults.vsCurrency %>" required>
+              </div>
+              <div class="col-md-8">
+                <div class="btn-group" role="group" aria-label="Quick currencies">
+                  <button class="btn btn-outline-secondary currency-pick" type="button" data-currency="usd">USD</button>
+                  <button class="btn btn-outline-secondary currency-pick" type="button" data-currency="eur">EUR</button>
+                  <button class="btn btn-outline-secondary currency-pick" type="button" data-currency="gbp">GBP</button>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <section class="wizard-step d-none" data-step="4">
+            <h2 class="h4">5. Choose fetch policy</h2>
+            <p class="text-body-secondary">Defaults are tuned for a quick, safe onboarding. Adjust only if this asset needs a different cadence.</p>
+            <div class="row g-3">
+              <div class="col-md-4">
+                <label class="form-label" for="recentEveryMinutes">Recent refresh minutes</label>
+                <input type="number" min="1" step="1" class="form-control" id="recentEveryMinutes" name="recentEveryMinutes" value="<%= defaults.recentEveryMinutes %>" required>
+              </div>
+              <div class="col-md-4">
+                <label class="form-label" for="maxBackfillDaysPerRun">Max backfill days/run</label>
+                <input type="number" min="1" step="1" class="form-control" id="maxBackfillDaysPerRun" name="maxBackfillDaysPerRun" value="<%= defaults.maxBackfillDaysPerRun %>" required>
+              </div>
+              <div class="col-md-4">
+                <label class="form-label" for="priority">Priority</label>
+                <input type="number" min="0" step="1" class="form-control" id="priority" name="priority" value="<%= defaults.priority %>" required>
+              </div>
+              <div class="col-12">
+                <div class="form-check form-switch">
+                  <input class="form-check-input" type="checkbox" role="switch" id="dailyBackfill" name="dailyBackfill" checked>
+                  <label class="form-check-label" for="dailyBackfill">Enable daily backfill</label>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <section class="wizard-step d-none" data-step="5">
+            <h2 class="h4">6. Save asset</h2>
+            <p class="text-body-secondary">Review the JSON that will be appended to <code>config/assets.json</code>. Saving creates a backup, hot reloads, and redirects to the asset detail page.</p>
+            <pre id="reviewJson" class="bg-body-tertiary border rounded p-3 small" style="white-space: pre-wrap;"></pre>
+          </section>
+
+          <section class="wizard-step d-none" data-step="6">
+            <h2 class="h4">7. Optional initial backfill</h2>
+            <p class="text-body-secondary">Skip this for the fastest setup, or enqueue a small first historical backfill immediately after save.</p>
+            <div class="form-check form-switch mb-3">
+              <input class="form-check-input" type="checkbox" role="switch" id="initialBackfill" name="initialBackfill">
+              <label class="form-check-label" for="initialBackfill">Queue initial backfill after saving</label>
+            </div>
+            <div class="row g-3">
+              <div class="col-md-4">
+                <label class="form-label" for="backfillDays">Days</label>
+                <input type="number" min="1" step="1" class="form-control" id="backfillDays" name="backfillDays" value="<%= defaults.backfillDays %>">
+              </div>
+              <div class="col-md-4">
+                <label class="form-label" for="backfillInterval">Interval</label>
+                <select class="form-select" id="backfillInterval" name="backfillInterval">
+                  <% intervals.forEach((interval) => { %>
+                    <option value="<%= interval %>" <%= interval === defaults.backfillInterval ? 'selected' : '' %>><%= interval %></option>
+                  <% }) %>
+                </select>
+              </div>
+            </div>
+          </section>
+        </div>
+        <div class="card-footer bg-white d-flex justify-content-between align-items-center flex-wrap gap-2">
+          <button type="button" id="prevStep" class="btn btn-outline-secondary" disabled>Back</button>
+          <div class="d-flex gap-2">
+            <button type="button" id="nextStep" class="btn btn-primary">Next</button>
+            <button type="submit" id="saveAsset" class="btn btn-success d-none">Save asset</button>
+          </div>
+        </div>
+      </form>
+    </main>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+      const existingAssets = <%- JSON.stringify(existingAssets.map((asset) => ({ id: asset.id, coingeckoId: asset.coingeckoId }))) %>;
+      const totalSteps = 7;
+      let currentStep = 0;
+      let coinGeckoTestPassed = false;
+
+      const form = document.getElementById('assetWizard');
+      const steps = Array.from(document.querySelectorAll('.wizard-step'));
+      const stepLinks = Array.from(document.querySelectorAll('#stepList .nav-link'));
+      const progress = document.getElementById('wizardProgress');
+      const prevButton = document.getElementById('prevStep');
+      const nextButton = document.getElementById('nextStep');
+      const saveButton = document.getElementById('saveAsset');
+      const alertBox = document.getElementById('wizardAlert');
+      const symbolInput = document.getElementById('symbol');
+      const idInput = document.getElementById('id');
+      const testButton = document.getElementById('testCoinGecko');
+      const testSpinner = document.getElementById('testSpinner');
+      const testResult = document.getElementById('testResult');
+      const reviewJson = document.getElementById('reviewJson');
+
+      function slugify(value) {
+        return String(value || '').trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+      }
+
+      function showAlert(message, type = 'danger') {
+        alertBox.className = `alert alert-${type}`;
+        alertBox.textContent = message;
+      }
+
+      function clearAlert() {
+        alertBox.className = 'alert d-none';
+        alertBox.textContent = '';
+      }
+
+      function formValue(name) {
+        const field = form.elements[name];
+        return field ? String(field.value || '').trim() : '';
+      }
+
+      function candidateAsset() {
+        return {
+          id: slugify(formValue('id')),
+          symbol: formValue('symbol').toUpperCase(),
+          name: formValue('name'),
+          coingeckoId: formValue('coingeckoId').toLowerCase(),
+          vsCurrency: formValue('vsCurrency').toLowerCase() || 'usd',
+          enabled: true,
+          priority: Number(formValue('priority')),
+          fetchPolicy: {
+            recentEveryMinutes: Number(formValue('recentEveryMinutes')),
+            dailyBackfill: document.getElementById('dailyBackfill').checked,
+            maxBackfillDaysPerRun: Number(formValue('maxBackfillDaysPerRun'))
+          }
+        };
+      }
+
+      function duplicateMessage(asset) {
+        if (existingAssets.some((existing) => String(existing.id).toLowerCase() === asset.id)) {
+          return `Asset ID '${asset.id}' already exists.`;
+        }
+        if (existingAssets.some((existing) => String(existing.coingeckoId).toLowerCase() === asset.coingeckoId)) {
+          return `CoinGecko ID '${asset.coingeckoId}' already exists.`;
+        }
+        return '';
+      }
+
+      function validateCurrentStep() {
+        clearAlert();
+        const fieldsByStep = [ ['symbol', 'name', 'id'], ['coingeckoId'], [], ['vsCurrency'], ['recentEveryMinutes', 'maxBackfillDaysPerRun', 'priority'], [], [] ];
+        const fields = fieldsByStep[currentStep] || [];
+        for (const name of fields) {
+          const field = form.elements[name];
+          if (field && !field.reportValidity()) {
+            return false;
+          }
+        }
+        const asset = candidateAsset();
+        const duplicate = duplicateMessage(asset);
+        if ((currentStep === 0 || currentStep === 1) && duplicate) {
+          showAlert(duplicate);
+          return false;
+        }
+        if (currentStep >= 2 && !coinGeckoTestPassed) {
+          showAlert('Run and pass the CoinGecko test before continuing.');
+          return false;
+        }
+        return true;
+      }
+
+      function updateReview() {
+        reviewJson.textContent = JSON.stringify(candidateAsset(), null, 2);
+      }
+
+      function showStep(index) {
+        currentStep = index;
+        steps.forEach((step, stepIndex) => step.classList.toggle('d-none', stepIndex !== currentStep));
+        stepLinks.forEach((link, stepIndex) => {
+          link.classList.toggle('active', stepIndex === currentStep);
+          link.classList.toggle('disabled', stepIndex > currentStep);
+        });
+        const percent = Math.round(((currentStep + 1) / totalSteps) * 100);
+        progress.style.width = `${percent}%`;
+        progress.textContent = `Step ${currentStep + 1} of ${totalSteps}`;
+        prevButton.disabled = currentStep === 0;
+        nextButton.classList.toggle('d-none', currentStep === totalSteps - 1);
+        saveButton.classList.toggle('d-none', currentStep !== totalSteps - 1);
+        if (currentStep >= 5) {
+          updateReview();
+        }
+      }
+
+      symbolInput.addEventListener('input', () => {
+        symbolInput.value = symbolInput.value.toUpperCase();
+        if (!idInput.dataset.touched) {
+          idInput.value = slugify(symbolInput.value);
+        }
+      });
+
+      idInput.addEventListener('input', () => {
+        idInput.dataset.touched = 'true';
+        idInput.value = slugify(idInput.value);
+      });
+
+      form.addEventListener('input', (event) => {
+        if (event.target.name === 'coingeckoId') {
+          coinGeckoTestPassed = false;
+        }
+        if (event.target.name === 'id') {
+          coinGeckoTestPassed = false;
+        }
+        if (currentStep >= 5) {
+          updateReview();
+        }
+      });
+
+      document.querySelectorAll('.currency-pick').forEach((button) => {
+        button.addEventListener('click', () => {
+          document.getElementById('vsCurrency').value = button.dataset.currency;
+        });
+      });
+
+      prevButton.addEventListener('click', () => showStep(Math.max(0, currentStep - 1)));
+      nextButton.addEventListener('click', () => {
+        if (validateCurrentStep()) {
+          showStep(Math.min(totalSteps - 1, currentStep + 1));
+        }
+      });
+
+      testButton.addEventListener('click', async () => {
+        const originalStep = currentStep;
+        currentStep = 1;
+        const canTest = validateCurrentStep();
+        currentStep = originalStep;
+        if (!canTest) {
+          return;
+        }
+        coinGeckoTestPassed = false;
+        testButton.disabled = true;
+        testSpinner.classList.remove('d-none');
+        testResult.textContent = 'Testing CoinGecko metadata and recent market chart sample...';
+        try {
+          const response = await fetch('/admin/assets/new/test/coingecko', {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify(candidateAsset())
+          });
+          const body = await response.json();
+          testResult.textContent = JSON.stringify(body, null, 2);
+          if (!response.ok || !body.ok) {
+            throw new Error((body.errors && body.errors.join(' ')) || body.message || 'CoinGecko test failed.');
+          }
+          coinGeckoTestPassed = true;
+          showAlert('CoinGecko ID validated and sample fetch succeeded.', 'success');
+        } catch (error) {
+          showAlert(error.message);
+        } finally {
+          testButton.disabled = false;
+          testSpinner.classList.add('d-none');
+        }
+      });
+
+      form.addEventListener('submit', (event) => {
+        if (!coinGeckoTestPassed) {
+          event.preventDefault();
+          showAlert('Run and pass the CoinGecko test before saving.');
+        }
+      });
+
+      showStep(0);
+    </script>
+  </body>
+</html>

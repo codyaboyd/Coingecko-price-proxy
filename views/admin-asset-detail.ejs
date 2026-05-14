@@ -31,6 +31,13 @@
         <a href="/admin" class="btn btn-sm btn-outline-secondary">&larr; Back to assets</a>
       </div>
 
+      <% if (typeof alert !== 'undefined' && alert && message) { %>
+        <div class="alert alert-<%= alert %> alert-dismissible fade show" role="alert">
+          <%= message %>
+          <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+        </div>
+      <% } %>
+
       <div class="row g-4">
         <section class="col-lg-5">
           <div class="card shadow-sm mb-4">
