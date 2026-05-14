@@ -10,6 +10,27 @@ const DEFAULT_RETRIES = 3;
 const DEFAULT_RATE_LIMIT_PAUSE_MS = 10 * 1000;
 const DEFAULT_BACKOFF_MS = 750;
 const MAX_BACKOFF_MS = 30 * 1000;
+let runtimeDefaults = {};
+
+function configureCoinGeckoDefaults(config = {}) {
+  runtimeDefaults = {
+    ...runtimeDefaults,
+    ...(config && typeof config === 'object' ? config : {})
+  };
+  return { ...runtimeDefaults };
+}
+
+function getCoinGeckoRuntimeValue(options, key, envName, fallback) {
+  if (options[key] !== undefined) {
+    return options[key];
+  }
+
+  if (runtimeDefaults[key] !== undefined) {
+    return runtimeDefaults[key];
+  }
+
+  return process.env[envName] !== undefined ? process.env[envName] : fallback;
+}
 
 function parsePositiveInteger(value, fallback) {
   const parsed = Number(value);
@@ -137,13 +158,7 @@ function createCoinGeckoClient(options = {}) {
   const baseUrl = normalizeBaseUrl(options.baseUrl || process.env.COINGECKO_API_BASE);
   const apiKey = options.apiKey || process.env.COINGECKO_API_KEY || '';
   const apiKeyType = normalizeApiKeyType(options.apiKeyType || process.env.COINGECKO_API_KEY_TYPE || (apiKey ? 'demo' : 'none'));
-  const timeoutMs = parsePositiveInteger(options.timeoutMs || process.env.COINGECKO_TIMEOUT_MS, DEFAULT_TIMEOUT_MS);
-  const retries = parseNonNegativeInteger(options.retries ?? process.env.COINGECKO_RETRIES, DEFAULT_RETRIES);
-  const rateLimitPauseMs = parsePositiveInteger(
-    options.rateLimitPauseMs || process.env.COINGECKO_RATE_LIMIT_PAUSE_MS,
-    DEFAULT_RATE_LIMIT_PAUSE_MS
-  );
-  const baseBackoffMs = parsePositiveInteger(options.baseBackoffMs || process.env.COINGECKO_BACKOFF_MS, DEFAULT_BACKOFF_MS);
+  const timeoutMs = parsePositiveInteger(getCoinGeckoRuntimeValue(options, 'timeoutMs', 'COINGECKO_TIMEOUT_MS', DEFAULT_TIMEOUT_MS), DEFAULT_TIMEOUT_MS);
   const limiter = options.limiter || getGlobalLimiter();
   const fetchImpl = options.fetch || createProxyAwareFetch(fetch);
   const rateBudget = options.rateBudget || getGlobalRateBudgetService();
@@ -156,6 +171,9 @@ function createCoinGeckoClient(options = {}) {
       url.searchParams.set(key, String(value));
     });
 
+    const retries = parseNonNegativeInteger(getCoinGeckoRuntimeValue(options, 'retries', 'COINGECKO_RETRIES', DEFAULT_RETRIES), DEFAULT_RETRIES);
+    const rateLimitPauseMs = parsePositiveInteger(getCoinGeckoRuntimeValue(options, 'rateLimitPauseMs', 'COINGECKO_RATE_LIMIT_PAUSE_MS', DEFAULT_RATE_LIMIT_PAUSE_MS), DEFAULT_RATE_LIMIT_PAUSE_MS);
+    const baseBackoffMs = parsePositiveInteger(getCoinGeckoRuntimeValue(options, 'baseBackoffMs', 'COINGECKO_BACKOFF_MS', DEFAULT_BACKOFF_MS), DEFAULT_BACKOFF_MS);
     let lastError;
     let callsForRefresh = 0;
     const retryBudget = rateBudget && typeof rateBudget.getRetryBudget === 'function' ? rateBudget.getRetryBudget() : null;
@@ -282,6 +300,7 @@ function createCoinGeckoClient(options = {}) {
 const defaultClient = createCoinGeckoClient();
 
 module.exports = {
+  configureCoinGeckoDefaults,
   createCoinGeckoClient,
   fetchMarketChartRange: defaultClient.fetchMarketChartRange
 };

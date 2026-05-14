@@ -12,9 +12,10 @@ const { buildRecentRefreshJobs, createRecentRefreshScheduler, normalizeFetchPoli
 const { clearApiCache, getApiCacheStats } = require('../services/api-cache');
 const { createBackupService } = require('../services/backup-service');
 const { RESTORE_CONFIRMATION_PHRASE, restoreBackup } = require('../services/restore-service');
-const { fetchMarketChartRange } = require('../services/coingecko');
+const { configureCoinGeckoDefaults, fetchMarketChartRange } = require('../services/coingecko');
 const { getGapReport } = require('../services/cache-policy');
 const { getGlobalRateBudgetService } = require('../services/rate-budget-service');
+const { getGlobalLimiter } = require('../utils/limiter');
 const { buildSystemHealth, bytesToSummary } = require('../services/system-health');
 const { clearLogFile, listLogFiles, readLatestLogLines, resolveLogFile } = require('../services/log-service');
 const { buildAdminDoctorReport } = require('../services/admin-doctor-service');
@@ -23,6 +24,7 @@ const { getAssetStaleness } = require('../services/staleness-service');
 const { applyMaintenanceModeToRuntime, createMaintenanceError, isMaintenanceMode } = require('../services/maintenance-service');
 const { assertTimestampRange, DAY_MS, parseDateInput } = require('../utils/date');
 const { parseJsonText, rollbackConfigChange, saveConfigChange } = require('../services/config-change-service');
+const { buildProfilePreview, listProfiles, readProfile, readServerConfigFile } = require('../services/profile-service');
 const { ADMIN_EVENT_ACTIONS, ADMIN_EVENT_ENTITY_TYPES, adminEventsToCsv, listAdminEventFacetValues, listAdminEvents, recordAdminEvent } = require('../services/admin-activity-service');
 const { createAlertsFromHealthReport, createAlertsFromIntegrityReport, listAlerts, updateAlertStatus } = require('../services/alert-service');
 const logger = require('../utils/logger');
@@ -643,7 +645,18 @@ function hotReloadConfigFile(req, filePath, payload) {
       return;
     }
 
+    const runtimeConfig = { ...req.app.get('config'), ...payload };
+    req.app.set('config', runtimeConfig);
     applyMaintenanceModeToRuntime(req.app, payload.maintenanceMode === true);
+    if (runtimeConfig.coingecko) {
+      configureCoinGeckoDefaults(runtimeConfig.coingecko);
+      getGlobalRateBudgetService(runtimeConfig.coingecko).configure(runtimeConfig.coingecko);
+      getGlobalLimiter(runtimeConfig.coingecko).configure(runtimeConfig.coingecko);
+    }
+    const recentRefreshScheduler = req.app.get('recentRefreshScheduler');
+    if (recentRefreshScheduler && typeof recentRefreshScheduler.reloadConfig === 'function') {
+      recentRefreshScheduler.reloadConfig(runtimeConfig);
+    }
   }
 }
 
@@ -1309,6 +1322,59 @@ router.post('/db-integrity/mark-stuck-failed', (req, res, next) => {
   }
 });
 
+
+router.get('/settings', (req, res, next) => {
+  try {
+    const runtimeConfig = req.app.get('config');
+    const fileConfig = readServerConfigFile(runtimeConfig);
+    const previews = listProfiles().map((profile) => buildProfilePreview(fileConfig, profile));
+
+    res.render('admin-settings', {
+      title: `${runtimeConfig.adminTitle} Settings`,
+      appName: runtimeConfig.appName,
+      currentProfile: fileConfig.profile || runtimeConfig.profile || 'conservative',
+      previews,
+      settingsAction: req.query.settingsAction || null,
+      settingsDetails: req.query.settingsDetails || null
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.post('/settings/profile', (req, res) => {
+  try {
+    const profile = readProfile(req.body.profile);
+    const fileConfig = readServerConfigFile(req.app.get('config'));
+    const preview = buildProfilePreview(fileConfig, profile);
+    const change = saveAdminConfigChange(req, 'config/server.json', preview.nextConfig, `Apply ${profile.name} profile`);
+    hotReloadConfigFile(req, 'config/server.json', preview.nextConfig);
+    recordAdminEvent(req, {
+      action: 'profile apply',
+      entityType: 'config',
+      entityId: 'config/server.json',
+      details: {
+        profile: profile.id,
+        changeId: change.id,
+        backupPath: change.backupPath,
+        changedValues: preview.changes.map((item) => item.key)
+      }
+    });
+
+    const params = new URLSearchParams({
+      settingsAction: 'profile applied',
+      settingsDetails: `${profile.name} profile applied. Backup: ${change.backupPath}`
+    });
+    res.redirect(`/admin/settings?${params.toString()}`);
+  } catch (error) {
+    const params = new URLSearchParams({
+      settingsAction: 'profile failed',
+      settingsDetails: error.message
+    });
+    res.redirect(`/admin/settings?${params.toString()}`);
+  }
+});
+
 router.get('/config-history', (req, res, next) => {
   try {
     const config = req.app.get('config');
@@ -1419,7 +1485,7 @@ router.get('/assets', (req, res, next) => {
         ...asset,
         earliestIso: formatTimestamp(bounds.earliest_ts),
         latestIso: formatTimestamp(bounds.latest_ts),
-        staleness: getAssetStaleness(db, asset, { jobScheduler: scheduler })
+        staleness: getAssetStaleness(db, asset, { jobScheduler: scheduler, config: req.app.get('config') })
       };
     });
 
@@ -1625,7 +1691,7 @@ router.get('/assets/:id', (req, res, next) => {
     const asset = configuredAsset ? { ...publicAsset, ...configuredAsset } : publicAsset;
     const bounds = getAssetCandleBounds(db, asset.id);
     const fetchRuns = listFetchRunsForAsset(db, asset.id, 10);
-    const staleness = getAssetStaleness(db, asset, { jobScheduler: getScheduler(req) });
+    const staleness = getAssetStaleness(db, asset, { jobScheduler: getScheduler(req), config: req.app.get('config') });
 
     res.render('admin-asset-detail', {
       title: `${config.adminTitle} - ${asset.symbol}`,

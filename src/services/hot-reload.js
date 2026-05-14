@@ -8,6 +8,9 @@ const { loadAssets } = require('./asset-service');
 const { loadServerConfig } = require('../utils/config');
 const { ensureDirectory, resolveFromRoot } = require('../utils/files');
 const { applyMaintenanceModeToRuntime } = require('./maintenance-service');
+const { getGlobalRateBudgetService } = require('./rate-budget-service');
+const { getGlobalLimiter } = require('../utils/limiter');
+const { configureCoinGeckoDefaults } = require('./coingecko');
 const logger = require('../utils/logger');
 const { createAlert } = require('./alert-service');
 
@@ -24,8 +27,28 @@ const SAFE_RUNTIME_SERVER_FIELDS = new Set([
   'appName',
   'adminTitle',
   'logLevel',
-  'maintenanceMode'
+  'maintenanceMode',
+  'profile',
+  'coingecko',
+  'automation'
 ]);
+
+function valuesEqual(left, right) {
+  return JSON.stringify(left) === JSON.stringify(right);
+}
+
+function applyRuntimeServerConfig(app, nextConfig) {
+  if (nextConfig.coingecko) {
+    configureCoinGeckoDefaults(nextConfig.coingecko);
+    getGlobalRateBudgetService(nextConfig.coingecko).configure(nextConfig.coingecko);
+    getGlobalLimiter(nextConfig.coingecko).configure(nextConfig.coingecko);
+  }
+
+  const recentRefreshScheduler = app && app.get('recentRefreshScheduler');
+  if (recentRefreshScheduler && typeof recentRefreshScheduler.reloadConfig === 'function') {
+    recentRefreshScheduler.reloadConfig(nextConfig);
+  }
+}
 
 function formatError(error) {
   if (!error) {
@@ -193,7 +216,7 @@ class HotReloadManager {
       const restartRequiredSettings = [];
 
       Object.keys(nextConfig).forEach((key) => {
-        if (this.config[key] === nextConfig[key]) {
+        if (valuesEqual(this.config[key], nextConfig[key])) {
           return;
         }
 
@@ -214,6 +237,7 @@ class HotReloadManager {
 
       if (this.app) {
         this.app.set('config', this.config);
+        applyRuntimeServerConfig(this.app, this.config);
       }
 
       if (restartRequiredSettings.length > 0) {

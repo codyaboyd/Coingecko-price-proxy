@@ -1,12 +1,7 @@
 {
-  "appName": "chrono-cache",
-  "host": "127.0.0.1",
-  "port": 3000,
-  "adminTitle": "Chrono Cache Admin",
-  "databasePath": "./data/history.sqlite",
-  "assetsConfigPath": "./config/assets.json",
-  "maintenanceMode": false,
-  "profile": "conservative",
+  "id": "conservative",
+  "name": "Conservative",
+  "description": "Lowest CoinGecko call rate, long cooldowns, and fewer automatic backfills for free-tier set-and-forget installs.",
   "coingecko": {
     "maxCallsPerMinute": 8,
     "safeMode": true,

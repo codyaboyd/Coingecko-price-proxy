@@ -54,6 +54,40 @@ function parseJsonText(jsonText) {
   }
 }
 
+function validatePositiveNumberObject(payload, objectField, fields, errors) {
+  const value = payload[objectField];
+  if (value === undefined) {
+    return;
+  }
+
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    errors.push(`server.${objectField} must be an object when provided.`);
+    return;
+  }
+
+  fields.forEach((field) => {
+    if (Object.prototype.hasOwnProperty.call(value, field)) {
+      const parsed = Number(value[field]);
+      if (!Number.isFinite(parsed) || parsed <= 0) {
+        errors.push(`server.${objectField}.${field} must be a positive number.`);
+      }
+    }
+  });
+}
+
+function validateBooleanObject(payload, objectField, fields, errors) {
+  const value = payload[objectField];
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return;
+  }
+
+  fields.forEach((field) => {
+    if (Object.prototype.hasOwnProperty.call(value, field) && typeof value[field] !== 'boolean') {
+      errors.push(`server.${objectField}.${field} must be true or false.`);
+    }
+  });
+}
+
 function validateServerPayload(payload) {
   const errors = [];
 
@@ -71,6 +105,11 @@ function validateServerPayload(payload) {
   if (Object.prototype.hasOwnProperty.call(payload, 'maintenanceMode') && typeof payload.maintenanceMode !== 'boolean') {
     errors.push('server.maintenanceMode must be true or false.');
   }
+
+  validatePositiveNumberObject(payload, 'coingecko', ['maxCallsPerMinute', 'rateLimitPauseMs', 'retries', 'baseBackoffMs'], errors);
+  validateBooleanObject(payload, 'coingecko', ['safeMode'], errors);
+  validatePositiveNumberObject(payload, 'automation', ['recentEveryMinutes', 'maxBackfillDaysPerRun', 'failureThreshold', 'failureCooldownMinutes'], errors);
+  validateBooleanObject(payload, 'automation', ['dailyBackfill', 'enable5m'], errors);
 
   SERVER_STRING_FIELDS.forEach((field) => {
     if (Object.prototype.hasOwnProperty.call(payload, field) && typeof payload[field] !== 'string') {

@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title><%= title %></title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="/public/css/app.css" rel="stylesheet">
+  </head>
+  <body>
+    <nav class="navbar navbar-expand-lg bg-dark navbar-dark">
+      <div class="container">
+        <a class="navbar-brand" href="/admin"><%= appName %></a>
+        <div class="navbar-nav ms-auto">
+          <a class="nav-link active" href="/admin/settings">Settings</a>
+          <a class="nav-link" href="/admin/assets">Assets</a>
+          <a class="nav-link" href="/admin/rate-budget">Rate Budget</a>
+          <a class="nav-link" href="/admin/reload-status">Reload Status</a>
+          <a class="nav-link" href="/admin/config-history">Config History</a>
+          <%- include('admin-alert-bell') %>
+          <a class="nav-link" href="/admin/logout">Logout</a>
+        </div>
+      </div>
+    </nav>
+
+    <%- include('admin-maintenance-banner') %>
+
+    <main class="container py-5">
+      <div class="d-flex align-items-start justify-content-between flex-wrap gap-3 mb-4">
+        <div>
+          <h1 class="display-6 fw-bold mb-1">Admin settings</h1>
+          <p class="text-secondary mb-0">Choose a safe set-and-forget operating profile. Applying a profile backs up <code>config/server.json</code>, writes the selected values, and hot reloads runtime settings.</p>
+        </div>
+        <a href="/admin" class="btn btn-outline-secondary">Back to dashboard</a>
+      </div>
+
+      <% if (settingsAction && settingsDetails) { %>
+        <% const ok = settingsAction === 'profile applied'; %>
+        <div class="alert alert-<%= ok ? 'success' : 'danger' %>" role="alert">
+          <span class="fw-semibold"><%= settingsAction %>:</span> <%= settingsDetails %>
+        </div>
+      <% } %>
+
+      <section class="row g-4">
+        <% previews.forEach((preview) => { %>
+          <% const profile = preview.profile; %>
+          <div class="col-lg-4">
+            <div class="card shadow-sm h-100 <%= currentProfile === profile.id ? 'border-primary' : '' %>">
+              <div class="card-header bg-white d-flex align-items-center justify-content-between gap-2">
+                <h2 class="h5 mb-0"><%= profile.name %></h2>
+                <% if (currentProfile === profile.id) { %>
+                  <span class="badge text-bg-primary">Current</span>
+                <% } %>
+              </div>
+              <div class="card-body d-flex flex-column">
+                <p class="text-secondary"><%= profile.description %></p>
+                <dl class="row small mb-3">
+                  <dt class="col-7">Max calls/min</dt>
+                  <dd class="col-5 text-end"><%= profile.coingecko.maxCallsPerMinute %></dd>
+                  <dt class="col-7">Safe mode</dt>
+                  <dd class="col-5 text-end"><%= profile.coingecko.safeMode ? 'on' : 'off' %></dd>
+                  <dt class="col-7">Recent refresh</dt>
+                  <dd class="col-5 text-end"><%= profile.automation.recentEveryMinutes %> min</dd>
+                  <dt class="col-7">Daily backfill</dt>
+                  <dd class="col-5 text-end"><%= profile.automation.dailyBackfill ? 'on' : 'off' %></dd>
+                  <dt class="col-7">Max backfill/run</dt>
+                  <dd class="col-5 text-end"><%= profile.automation.maxBackfillDaysPerRun %> day(s)</dd>
+                  <dt class="col-7">Failure cooldown</dt>
+                  <dd class="col-5 text-end"><%= profile.automation.failureCooldownMinutes %> min</dd>
+                </dl>
+
+                <div class="border rounded p-3 mb-3 bg-body-tertiary">
+                  <h3 class="h6">Values that will change</h3>
+                  <% if (preview.changes.length === 0) { %>
+                    <p class="small text-secondary mb-0">No changes. This profile already matches <code>config/server.json</code>.</p>
+                  <% } else { %>
+                    <div class="table-responsive">
+                      <table class="table table-sm align-middle mb-0">
+                        <thead>
+                          <tr>
+                            <th scope="col">Setting</th>
+                            <th scope="col">Current</th>
+                            <th scope="col">New</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          <% preview.changes.forEach((change) => { %>
+                            <tr>
+                              <td><code><%= change.key %></code></td>
+                              <td><code><%= change.currentLabel %></code></td>
+                              <td><code><%= change.nextLabel %></code></td>
+                            </tr>
+                          <% }) %>
+                        </tbody>
+                      </table>
+                    </div>
+                  <% } %>
+                </div>
+
+                <form method="post" action="/admin/settings/profile" class="mt-auto" onsubmit="return confirm('Apply the <%= profile.name %> profile to config/server.json? A backup will be created first.');">
+                  <input type="hidden" name="profile" value="<%= profile.id %>">
+                  <button type="submit" class="btn <%= currentProfile === profile.id ? 'btn-outline-primary' : 'btn-primary' %> w-100">
+                    Apply <%= profile.name %>
+                  </button>
+                </form>
+              </div>
+            </div>
+          </div>
+        <% }) %>
+      </section>
+    </main>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+  </body>
+</html>

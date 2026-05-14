@@ -2,6 +2,23 @@ const path = require('path');
 const { readJsonFile } = require('./files');
 const { loadEnv } = require('./env');
 
+const DEFAULT_COINGECKO_CONFIG = {
+  maxCallsPerMinute: 8,
+  safeMode: true,
+  rateLimitPauseMs: 120000,
+  retries: 1,
+  baseBackoffMs: 3000
+};
+
+const DEFAULT_AUTOMATION_CONFIG = {
+  recentEveryMinutes: 120,
+  dailyBackfill: false,
+  maxBackfillDaysPerRun: 3,
+  enable5m: false,
+  failureThreshold: 3,
+  failureCooldownMinutes: 60
+};
+
 function parseConfiguredPort(value) {
   const port = Number(value);
 
@@ -10,6 +27,13 @@ function parseConfiguredPort(value) {
   }
 
   return port;
+}
+
+function normalizeObjectConfig(value, defaults) {
+  return {
+    ...defaults,
+    ...(value && typeof value === 'object' && !Array.isArray(value) ? value : {})
+  };
 }
 
 function loadServerConfig() {
@@ -34,8 +58,11 @@ function loadServerConfig() {
     logLevel: env.logLevel,
     databasePath: process.env.DB_PATH || process.env.DATABASE_PATH || fileConfig.databasePath || env.databasePath,
     assetsConfigPath: process.env.ASSETS_CONFIG_PATH || fileConfig.assetsConfigPath || env.assetsConfigPath,
-    maintenanceMode: fileConfig.maintenanceMode === true
+    maintenanceMode: fileConfig.maintenanceMode === true,
+    profile: fileConfig.profile || 'conservative',
+    coingecko: normalizeObjectConfig(fileConfig.coingecko, DEFAULT_COINGECKO_CONFIG),
+    automation: normalizeObjectConfig(fileConfig.automation, DEFAULT_AUTOMATION_CONFIG)
   };
 }
 
-module.exports = { loadServerConfig };
+module.exports = { DEFAULT_AUTOMATION_CONFIG, DEFAULT_COINGECKO_CONFIG, loadServerConfig };
