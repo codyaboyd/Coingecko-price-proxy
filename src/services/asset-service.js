@@ -81,6 +81,39 @@ function validateAsset(asset, index) {
   return errors;
 }
 
+function validateUniqueAssetFields(assets) {
+  const errors = [];
+  const seenIds = new Map();
+  const seenCoinGeckoIds = new Map();
+
+  assets.forEach((asset, index) => {
+    if (!asset || typeof asset !== 'object' || Array.isArray(asset)) {
+      return;
+    }
+
+    const id = typeof asset.id === 'string' ? asset.id.trim().toLowerCase() : '';
+    const coingeckoId = typeof asset.coingeckoId === 'string' ? asset.coingeckoId.trim().toLowerCase() : '';
+
+    if (id) {
+      if (seenIds.has(id)) {
+        errors.push(`${describeLocation(index)}.id duplicates ${describeLocation(seenIds.get(id))}.id (${asset.id}).`);
+      } else {
+        seenIds.set(id, index);
+      }
+    }
+
+    if (coingeckoId) {
+      if (seenCoinGeckoIds.has(coingeckoId)) {
+        errors.push(`${describeLocation(index)}.coingeckoId duplicates ${describeLocation(seenCoinGeckoIds.get(coingeckoId))}.coingeckoId (${asset.coingeckoId}).`);
+      } else {
+        seenCoinGeckoIds.set(coingeckoId, index);
+      }
+    }
+  });
+
+  return errors;
+}
+
 function validateAssetsPayload(payload) {
   const errors = [];
 
@@ -99,6 +132,7 @@ function validateAssetsPayload(payload) {
   payload.assets.forEach((asset, index) => {
     errors.push(...validateAsset(asset, index));
   });
+  errors.push(...validateUniqueAssetFields(payload.assets));
 
   return errors;
 }
@@ -138,6 +172,7 @@ module.exports = {
   readAssetConfig,
   validateAsset,
   validateFetchPolicy,
+  validateUniqueAssetFields,
   validateAssetsFile,
   validateAssetsPayload
 };

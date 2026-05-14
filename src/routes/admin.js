@@ -7,12 +7,13 @@ const { readAssetConfig, loadAssets } = require('../services/asset-service');
 const { CONFLICT_POLICIES, DEFAULT_CONFLICT_POLICY, SUPPORTED_INTERVALS, countCandles } = require('../services/history-service');
 const { convertDumpFile, getImportFile, importNormalizedHistoryFile, listImportFiles, previewNormalizedHistoryFile, registerImportFile, updateImportFile } = require('../services/import-service');
 const { ensureDirectory, resolveFromRoot } = require('../utils/files');
+const { enqueueBackfill } = require('../jobs/backfill-job');
 const { createScheduler } = require('../jobs/scheduler');
 const { buildRecentRefreshJobs, createRecentRefreshScheduler, normalizeFetchPolicy } = require('../jobs/recent-refresh-scheduler');
 const { clearApiCache, getApiCacheStats } = require('../services/api-cache');
 const { createBackupService } = require('../services/backup-service');
 const { RESTORE_CONFIRMATION_PHRASE, restoreBackup } = require('../services/restore-service');
-const { configureCoinGeckoDefaults, fetchMarketChartRange } = require('../services/coingecko');
+const { configureCoinGeckoDefaults, createCoinGeckoClient, fetchMarketChartRange } = require('../services/coingecko');
 const { getGapReport } = require('../services/cache-policy');
 const { getGlobalRateBudgetService } = require('../services/rate-budget-service');
 const { getGlobalLimiter } = require('../utils/limiter');
@@ -553,6 +554,102 @@ function normalizeConfigAssetForm(body = {}, currentAsset = {}) {
       dailyBackfill: body.dailyBackfill === 'on' || body.dailyBackfill === 'true' || body.dailyBackfill === true,
       maxBackfillDaysPerRun: parsePositiveNumberField(body.maxBackfillDaysPerRun, 'fetchPolicy.maxBackfillDaysPerRun')
     }
+  };
+}
+
+function slugifyAssetId(value) {
+  return String(value || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+}
+
+function normalizeNewAssetForm(body = {}, existingAssets = []) {
+  const symbol = normalizeTextField(body.symbol, 'symbol').toUpperCase();
+  const name = normalizeTextField(body.name, 'name');
+  const id = slugifyAssetId(body.id || symbol);
+  const coingeckoId = normalizeTextField(body.coingeckoId, 'coingeckoId').toLowerCase();
+  const vsCurrency = normalizeTextField(body.vsCurrency || 'usd', 'vsCurrency').toLowerCase();
+  const maxPriority = existingAssets.reduce((max, asset) => Math.max(max, Number(asset.priority) || 0), 0);
+
+  if (!id) {
+    throw new Error('id must contain at least one letter or number.');
+  }
+
+  if (existingAssets.some((asset) => String(asset.id).toLowerCase() === id)) {
+    throw new Error(`Asset ID '${id}' is already configured.`);
+  }
+
+  if (existingAssets.some((asset) => String(asset.coingeckoId).toLowerCase() === coingeckoId)) {
+    throw new Error(`CoinGecko ID '${coingeckoId}' is already configured.`);
+  }
+
+  return {
+    id,
+    symbol,
+    name,
+    coingeckoId,
+    vsCurrency,
+    enabled: true,
+    priority: parsePositiveIntegerField(body.priority === undefined || body.priority === '' ? maxPriority + 10 : body.priority, 'priority'),
+    fetchPolicy: {
+      recentEveryMinutes: parsePositiveNumberField(body.recentEveryMinutes || 60, 'fetchPolicy.recentEveryMinutes'),
+      dailyBackfill: body.dailyBackfill === undefined || body.dailyBackfill === 'on' || body.dailyBackfill === 'true' || body.dailyBackfill === true,
+      maxBackfillDaysPerRun: parsePositiveNumberField(body.maxBackfillDaysPerRun || 10, 'fetchPolicy.maxBackfillDaysPerRun')
+    }
+  };
+}
+
+function duplicateAssetIssues(asset, existingAssets = []) {
+  const id = String(asset.id || '').toLowerCase();
+  const coingeckoId = String(asset.coingeckoId || '').toLowerCase();
+  const issues = [];
+
+  if (existingAssets.some((existingAsset) => String(existingAsset.id).toLowerCase() === id)) {
+    issues.push(`Asset ID '${asset.id}' is already configured.`);
+  }
+
+  if (existingAssets.some((existingAsset) => String(existingAsset.coingeckoId).toLowerCase() === coingeckoId)) {
+    issues.push(`CoinGecko ID '${asset.coingeckoId}' is already configured.`);
+  }
+
+  return issues;
+}
+
+async function validateCoinGeckoId(coingeckoId) {
+  const id = normalizeTextField(coingeckoId, 'coingeckoId').toLowerCase();
+  const client = createCoinGeckoClient();
+  const metadata = await client.requestJson(`/coins/${encodeURIComponent(id)}`, {
+    localization: false,
+    tickers: false,
+    market_data: false,
+    community_data: false,
+    developer_data: false,
+    sparkline: false
+  }, { trackRefresh: false });
+
+  if (!metadata || String(metadata.id || '').toLowerCase() !== id) {
+    throw new Error(`CoinGecko did not return metadata for '${id}'.`);
+  }
+
+  return {
+    id: metadata.id,
+    symbol: metadata.symbol ? String(metadata.symbol).toUpperCase() : null,
+    name: metadata.name || null
+  };
+}
+
+function buildInitialBackfillRequest(asset, body = {}) {
+  const now = Date.now();
+  const days = parsePositiveNumberField(body.backfillDays || 30, 'backfillDays');
+
+  return {
+    from: new Date(now - (days * DAY_MS)).toISOString(),
+    to: new Date(now).toISOString(),
+    interval: body.backfillInterval || '1d',
+    vsCurrency: asset.vsCurrency,
+    conflictPolicy: DEFAULT_CONFLICT_POLICY
   };
 }
 
@@ -1501,6 +1598,106 @@ router.get('/assets', (req, res, next) => {
   }
 });
 
+router.get('/assets/new', (req, res, next) => {
+  try {
+    const config = req.app.get('config');
+    const existingAssets = getConfiguredAssets(req);
+    const maxPriority = existingAssets.reduce((max, asset) => Math.max(max, Number(asset.priority) || 0), 0);
+
+    res.render('admin-asset-new', {
+      title: `${config.adminTitle} - Add Asset`,
+      appName: config.appName,
+      existingAssets,
+      defaults: {
+        vsCurrency: 'usd',
+        recentEveryMinutes: 60,
+        maxBackfillDaysPerRun: 10,
+        priority: maxPriority + 10,
+        backfillDays: 30,
+        backfillInterval: '1d'
+      },
+      intervals: Array.from(SUPPORTED_INTERVALS),
+      alert: req.query.alert || null,
+      message: req.query.message || null
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.post('/assets/new/test/coingecko', async (req, res, next) => {
+  try {
+    requireMaintenanceDisabled(req, 'Maintenance mode is active; CoinGecko asset validation is paused.');
+    const { payload } = readEditableAssetConfig(req);
+    const candidate = normalizeNewAssetForm(req.body, []);
+    const duplicateIssues = duplicateAssetIssues(candidate, payload.assets);
+
+    if (duplicateIssues.length > 0) {
+      res.status(409).json({ ok: false, errors: duplicateIssues });
+      return;
+    }
+
+    const metadata = await validateCoinGeckoId(candidate.coingeckoId);
+    const toTs = Date.now();
+    const fromTs = toTs - (2 * DAY_MS);
+    const sample = await fetchMarketChartRange(candidate.coingeckoId, candidate.vsCurrency, fromTs, toTs);
+
+    res.json({
+      ok: true,
+      asset: candidate,
+      metadata,
+      sampleCounts: {
+        prices: Array.isArray(sample.prices) ? sample.prices.length : 0,
+        marketCaps: Array.isArray(sample.market_caps) ? sample.market_caps.length : 0,
+        totalVolumes: Array.isArray(sample.total_volumes) ? sample.total_volumes.length : 0
+      }
+    });
+  } catch (error) {
+    res.status(error.status || 400).json({ ok: false, message: error.message });
+  }
+});
+
+router.post('/assets/new', async (req, res) => {
+  let newAsset = null;
+
+  try {
+    requireMaintenanceDisabled(req, 'Maintenance mode is active; new asset validation and optional backfill are paused.');
+    const { payload } = readEditableAssetConfig(req);
+    newAsset = normalizeNewAssetForm(req.body, payload.assets);
+    await validateCoinGeckoId(newAsset.coingeckoId);
+
+    payload.assets.push(newAsset);
+    const change = saveAdminConfigChange(req, 'config/assets.json', payload, `Add asset ${newAsset.id}`);
+    hotReloadConfigFile(req, 'config/assets.json', payload);
+
+    const details = { changeId: change.id, backupPath: change.backupPath, filePath: 'config/assets.json' };
+
+    if (req.body.initialBackfill === 'on' || req.body.initialBackfill === 'true') {
+      const result = enqueueBackfill(getDatabase(req), getScheduler(req), newAsset.id, buildInitialBackfillRequest(newAsset, req.body));
+      details.initialBackfill = {
+        projectedCalls: result.projectedCalls,
+        jobCount: result.enqueuedJobs.length,
+        interval: result.request.interval,
+        fromIso: result.request.fromIso,
+        toIso: result.request.toIso
+      };
+    }
+
+    recordAdminEvent(req, { action: 'config edit', entityType: 'asset', entityId: newAsset.id, details });
+    const params = new URLSearchParams({
+      alert: 'success',
+      message: `Added ${newAsset.symbol}. Backup: ${change.backupPath}`
+    });
+    res.redirect(`/admin/assets/${encodeURIComponent(newAsset.id)}?${params.toString()}`);
+  } catch (error) {
+    const params = new URLSearchParams({
+      alert: 'danger',
+      message: error.message
+    });
+    res.redirect(`/admin/assets/new?${params.toString()}`);
+  }
+});
+
 router.get('/assets/:id/edit', (req, res, next) => {
   try {
     const config = req.app.get('config');
@@ -1706,7 +1903,9 @@ router.get('/assets/:id', (req, res, next) => {
       },
       fetchRuns,
       staleness,
-      rateBudget: getGlobalRateBudgetService().buildSnapshot({ scheduler: getScheduler(req), assets: getConfiguredAssets(req) })
+      rateBudget: getGlobalRateBudgetService().buildSnapshot({ scheduler: getScheduler(req), assets: getConfiguredAssets(req) }),
+      alert: req.query.alert || null,
+      message: req.query.message || null
     });
   } catch (error) {
     next(error);

@@ -35,7 +35,10 @@
           <h1 class="display-6 fw-bold mb-1">Assets</h1>
           <p class="lead text-body-secondary mb-0">Review configured CoinGecko assets and jump into safe per-asset editing.</p>
         </div>
-        <a class="btn btn-outline-secondary" href="/admin">Back to dashboard</a>
+        <div class="d-flex flex-wrap gap-2">
+          <a class="btn btn-primary" href="/admin/assets/new">Add asset</a>
+          <a class="btn btn-outline-secondary" href="/admin">Back to dashboard</a>
+        </div>
       </div>
 
       <% if (alert && message) { %>
