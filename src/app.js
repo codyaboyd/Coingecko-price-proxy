@@ -22,6 +22,7 @@ function createApp(config) {
 
   app.use((req, res, next) => {
     const runtimeConfig = req.app.get('config') || {};
+    res.locals.currentPath = req.path;
     res.locals.maintenanceMode = runtimeConfig.maintenanceMode === true;
     res.locals.maintenanceBannerMessage = 'Maintenance mode is active. Public history uses local cache only; fetch jobs and imports are paused.';
     res.locals.openAlertCount = countOpenAlerts(req.app.get('db'));

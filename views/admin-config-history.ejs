@@ -9,22 +9,7 @@
     <script src="/public/js/admin-nav.js" defer></script>
   </head>
   <body>
-    <nav class="navbar navbar-expand-lg bg-dark navbar-dark">
-      <div class="container">
-        <a class="navbar-brand" href="/admin"><%= appName %></a>
-        <div class="navbar-nav ms-auto">
-          <a class="nav-link" href="/admin/settings">Settings</a>
-          <a class="nav-link" href="/admin/assets">Assets</a>
-          <a class="nav-link active" href="/admin/config-history">Config History</a>
-          <a class="nav-link" href="/admin/reload-status">Reload Status</a>
-          <a class="nav-link" href="/admin/backups">Backups</a>
-          <a class="nav-link" href="/admin/runbook">Runbook</a>
-          <%- include('admin-alert-bell') %>
-          <a class="nav-link" href="/admin/logs">Logs</a>
-          <a class="nav-link" href="/admin/logout">Logout</a>
-        </div>
-      </div>
-    </nav>
+    <%- include('admin-nav') %>
 
     <%- include('admin-maintenance-banner') %>
 

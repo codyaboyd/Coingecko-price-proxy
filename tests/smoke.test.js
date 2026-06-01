@@ -121,6 +121,45 @@ test('cleanup service prunes operational data without deleting candle history', 
   assert.equal(db.prepare("SELECT status FROM import_files WHERE id = ?").get(importFile.id).status, 'archived');
 });
 
+test('admin views share the complete admin navigation partial', () => {
+  const adminViewDirectory = path.join(process.cwd(), 'views');
+  const excludedViews = new Set([
+    'admin-alert-bell.ejs',
+    'admin-login.ejs',
+    'admin-maintenance-banner.ejs',
+    'admin-nav.ejs'
+  ]);
+  const adminViews = fs.readdirSync(adminViewDirectory)
+    .filter((fileName) => fileName.startsWith('admin') && fileName.endsWith('.ejs') && !excludedViews.has(fileName));
+
+  assert.ok(adminViews.length > 0);
+  adminViews.forEach((fileName) => {
+    const view = fs.readFileSync(path.join(adminViewDirectory, fileName), 'utf8');
+    assert.match(view, /include\('admin-nav'\)/, `${fileName} should render the shared admin navigation`);
+  });
+
+  const nav = fs.readFileSync(path.join(adminViewDirectory, 'admin-nav.ejs'), 'utf8');
+  [
+    'Dashboard',
+    'Settings',
+    'Assets',
+    'Imports',
+    'Backups',
+    'Cleanup',
+    'Activity',
+    'Doctor',
+    'Reload Status',
+    'System Health',
+    'DB Integrity',
+    'Rate Budget',
+    'Logs',
+    'API Test',
+    'Config History',
+    'Runbook'
+  ].forEach((label) => assert.match(nav, new RegExp(`label: '${label}'`)));
+});
+
+
 test('config loads from the default server config', () => {
   const config = loadServerConfig();
 

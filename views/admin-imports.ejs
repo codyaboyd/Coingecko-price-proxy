@@ -9,27 +9,7 @@
     <script src="/public/js/admin-nav.js" defer></script>
   </head>
   <body>
-    <nav class="navbar navbar-expand-lg navbar-dark bg-dark">
-      <div class="container-fluid">
-        <a class="navbar-brand" href="/admin"><%= appName %></a>
-        <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#adminNavbar" aria-controls="adminNavbar" aria-expanded="false" aria-label="Toggle navigation">
-          <span class="navbar-toggler-icon"></span>
-        </button>
-        <div class="collapse navbar-collapse" id="adminNavbar">
-          <ul class="navbar-nav me-auto mb-2 mb-lg-0">
-            <li class="nav-item"><a class="nav-link" href="/admin">Dashboard</a></li>
-            <li class="nav-item"><a class="nav-link" href="/admin/assets">Assets</a></li>
-            <li class="nav-item"><a class="nav-link active" aria-current="page" href="/admin/imports">Imports</a></li>
-            <li class="nav-item"><a class="nav-link" href="/admin/api-test">API test</a></li>
-            <li class="nav-item"><a class="nav-link" href="/admin/reload-status">Reload status</a></li>
-            <li class="nav-item"><a class="nav-link" href="/admin/system-health">System health</a></li>
-            <li class="nav-item"><a class="nav-link" href="/admin/logs">Logs</a></li>
-            <li class="nav-item"><a class="nav-link" href="/admin/runbook">Runbook</a></li>
-            <li class="nav-item"><a class="nav-link" href="/admin/logout">Logout</a></li>
-          </ul>
-        </div>
-      </div>
-    </nav>
+    <%- include('admin-nav') %>
 
     <%- include('admin-maintenance-banner') %>
 
