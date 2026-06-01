@@ -71,6 +71,52 @@
         </div>
       </section>
 
+
+      <section class="card shadow-sm mb-4" aria-labelledby="price-query-heading">
+        <div class="card-header bg-white">
+          <h2 id="price-query-heading" class="h4 mb-1">How to query prices</h2>
+          <p class="small text-secondary mb-0">Price endpoints return cached local OHLCV candles; they do not call CoinGecko while handling your request.</p>
+        </div>
+        <div class="card-body">
+          <div class="row g-4">
+            <div class="col-lg-6">
+              <h3 class="h6">1. Discover asset IDs</h3>
+              <p class="small text-secondary">Start with <code>GET /api/v1/assets</code> to find enabled asset IDs, default quote currencies, and cached range hints.</p>
+              <div class="position-relative mb-3">
+                <pre class="bg-dark text-white rounded p-3 pe-5 mb-0"><code>curl http://127.0.0.1:3000/api/v1/assets</code></pre>
+                <button class="btn btn-sm btn-light position-absolute top-0 end-0 m-2 copy-btn" type="button" data-copy="curl http://127.0.0.1:3000/api/v1/assets">Copy</button>
+              </div>
+              <h3 class="h6">2. Request candles</h3>
+              <p class="small text-secondary mb-2">Use <code>GET /api/v1/history/:assetId</code>. The latest spot-like value for most integrations is the last candle's <code>close</code>.</p>
+              <div class="position-relative">
+                <pre class="bg-dark text-white rounded p-3 pe-5 mb-0"><code>curl 'http://127.0.0.1:3000/api/v1/history/<%= encodeURIComponent(selectedAsset.id) %>?interval=1d&amp;vs=<%= encodeURIComponent(selectedAsset.vsCurrency) %>&amp;limit=5'</code></pre>
+                <button class="btn btn-sm btn-light position-absolute top-0 end-0 m-2 copy-btn" type="button" data-copy="curl 'http://127.0.0.1:3000/api/v1/history/<%= encodeURIComponent(selectedAsset.id) %>?interval=1d&amp;vs=<%= encodeURIComponent(selectedAsset.vsCurrency) %>&amp;limit=5'">Copy</button>
+              </div>
+            </div>
+            <div class="col-lg-6">
+              <h3 class="h6">History query parameters</h3>
+              <div class="table-responsive">
+                <table class="table table-sm align-middle mb-3">
+                  <thead>
+                    <tr><th>Parameter</th><th>Default</th><th>Use</th></tr>
+                  </thead>
+                  <tbody>
+                    <tr><td><code>interval</code></td><td><code>1d</code></td><td><code>5m</code>, <code>1h</code>, or <code>1d</code>.</td></tr>
+                    <tr><td><code>from</code> / <code>to</code></td><td>cached range</td><td>ISO date, ISO timestamp, or millisecond timestamp.</td></tr>
+                    <tr><td><code>vs</code></td><td>asset default</td><td>Quote currency, such as <code>usd</code>.</td></tr>
+                    <tr><td><code>limit</code></td><td><code>1000</code></td><td>Return <code>1</code> to <code>5000</code> candles.</td></tr>
+                    <tr><td><code>format</code></td><td><code>json</code></td><td>Use <code>csv</code> for comma-separated output.</td></tr>
+                    <tr><td><code>fill</code></td><td><code>none</code></td><td>Use <code>previous</code> to fill gaps from the previous close.</td></tr>
+                    <tr><td><code>cache</code></td><td>enabled</td><td>Use <code>bypass</code> to skip the local API response cache.</td></tr>
+                  </tbody>
+                </table>
+              </div>
+              <p class="small text-secondary mb-0">Range limits protect large reads: <code>5m</code> allows 31 days, <code>1h</code> allows two leap years, and <code>1d</code> allows 20 leap years.</p>
+            </div>
+          </div>
+        </div>
+      </section>
+
       <section class="card shadow-sm mb-4" aria-labelledby="assets-heading">
         <div class="card-header bg-white d-flex justify-content-between align-items-center flex-wrap gap-2">
           <div>

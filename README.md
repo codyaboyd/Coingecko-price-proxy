@@ -1,6 +1,6 @@
 # chrono-cache
 
-`chrono-cache` is an initial MVP scaffold for a Node.js and Express application that will eventually cache cryptocurrency price data. CoinGecko fetching is intentionally **not** implemented yet.
+`chrono-cache` is a Node.js and Express application for caching cryptocurrency OHLCV price history in SQLite and serving it through a small local API.
 
 ## Stack
 
@@ -9,7 +9,7 @@
 - Express server
 - EJS server-rendered admin pages
 - Bootstrap 5 UI
-- SQLite persistence scaffold
+- SQLite persistence for cached OHLCV candles
 
 ## Project structure
 
@@ -126,9 +126,125 @@ npm run dev
 Open the app:
 
 - Admin: <http://127.0.0.1:3000/admin>
+- API docs: <http://127.0.0.1:3000/docs>
 - Health: <http://127.0.0.1:3000/health>
 
 The admin dashboard shows app status, runtime, loaded asset count, asset config path, and database path.
+
+
+## Querying cached prices
+
+The public price API is read-only, unauthenticated, and served from the local SQLite cache. It does **not** call CoinGecko during a request, so query results depend on the candles that have already been imported, fetched, or backfilled.
+
+After starting the app, open the interactive docs at <http://127.0.0.1:3000/docs> or the generated OpenAPI-style document at <http://127.0.0.1:3000/api/v1/openapi.json>.
+
+### 1. Find available assets
+
+Use the assets endpoint to discover the IDs, symbols, quote currencies, and cached range hints that can be queried:
+
+```bash
+curl http://127.0.0.1:3000/api/v1/assets
+```
+
+Example response shape:
+
+```json
+{
+  "assets": [
+    {
+      "id": "btc",
+      "symbol": "BTC",
+      "name": "Bitcoin",
+      "vsCurrency": "usd",
+      "earliestTs": 1704067200000,
+      "latestTs": 1706745600000
+    }
+  ]
+}
+```
+
+You can also inspect one asset directly:
+
+```bash
+curl http://127.0.0.1:3000/api/v1/assets/btc
+```
+
+### 2. Query price history
+
+Use `GET /api/v1/history/:assetId` to read cached candles. Each candle includes millisecond `ts`, OHLC prices, optional `volume`, optional `marketCap`, and `fetchedAt`. The most commonly consumed spot price is the candle `close` value.
+
+```bash
+curl 'http://127.0.0.1:3000/api/v1/history/btc?interval=1d&vs=usd&limit=5'
+```
+
+Example response shape:
+
+```json
+{
+  "asset": { "id": "btc", "symbol": "BTC", "name": "Bitcoin", "vsCurrency": "usd" },
+  "vsCurrency": "usd",
+  "interval": "1d",
+  "from": 1704067200000,
+  "to": 1704412800000,
+  "source": "local",
+  "count": 5,
+  "candles": [
+    {
+      "assetId": "btc",
+      "vsCurrency": "usd",
+      "interval": "1d",
+      "ts": 1704067200000,
+      "open": 42280.12,
+      "high": 43100.55,
+      "low": 41875.44,
+      "close": 42925.18,
+      "volume": 123456789.01,
+      "marketCap": 840000000000,
+      "fetchedAt": "2026-01-01T00:00:00.000Z"
+    }
+  ]
+}
+```
+
+Useful query parameters:
+
+| Parameter | Default | Description |
+| --- | --- | --- |
+| `interval` | `1d` | Candle size. Supported values are `5m`, `1h`, and `1d`. |
+| `from` / `to` | cached range | ISO date (`2026-01-31`), ISO timestamp, or millisecond timestamp bounds. |
+| `vs` | asset default | Quote currency such as `usd`. Must be a 2-20 character lowercase-compatible code using letters, numbers, `_`, or `-`. |
+| `limit` | `1000` | Maximum candles to return. Must be `1` through `5000`. |
+| `format` | `json` | Use `format=csv` to download CSV instead of JSON. |
+| `fill` | `none` | Use `fill=previous` to synthesize missing candles from the previous close. |
+| `cache` | response cache enabled | Use `cache=bypass` to skip the local API response cache. |
+
+Date-range safeguards are interval-specific: `5m` queries allow up to 31 days, `1h` queries allow up to two leap years, and `1d` queries allow up to 20 leap years.
+
+### Common query examples
+
+Get the latest five daily BTC candles:
+
+```bash
+curl 'http://127.0.0.1:3000/api/v1/history/btc?interval=1d&vs=usd&limit=5'
+```
+
+Get hourly ETH candles for January 2026:
+
+```bash
+curl 'http://127.0.0.1:3000/api/v1/history/eth?interval=1h&vs=usd&from=2026-01-01&to=2026-01-31&limit=744'
+```
+
+Download daily BTC candles as CSV:
+
+```bash
+curl -o btc-daily.csv 'http://127.0.0.1:3000/api/v1/history/btc?interval=1d&vs=usd&format=csv&limit=365'
+```
+
+Read the latest cached close with `jq`:
+
+```bash
+curl -s 'http://127.0.0.1:3000/api/v1/history/btc?interval=1d&vs=usd&limit=1' | jq '.candles[-1].close'
+```
 
 ## Admin authentication
 
