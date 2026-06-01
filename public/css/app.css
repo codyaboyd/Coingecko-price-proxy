@@ -492,8 +492,14 @@ a.list-group-item-action:focus {
   .navbar .nav-link {
     border-radius: 999px;
     min-height: 2.35rem;
-    scroll-snap-align: start;
-    white-space: nowrap;
+    scroll-snap-align: none;
+    white-space: normal;
+  }
+
+  .navbar .nav-link:hover,
+  .navbar .nav-link:focus,
+  .navbar .nav-link.active {
+    transform: translateX(2px);
   }
 
   .navbar .nav-link:hover,
