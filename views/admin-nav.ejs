@@ -1,0 +1,39 @@
+<%
+  const navAppName = (typeof appName !== 'undefined' && appName) || (typeof status !== 'undefined' && status.appName) || 'Admin';
+  const navCurrentPath = (typeof currentPath !== 'undefined' && currentPath) || '';
+  const navItems = [
+    { label: 'Dashboard', href: '/admin', paths: ['/admin'], exact: true },
+    { label: 'Settings', href: '/admin/settings', paths: ['/admin/settings'] },
+    { label: 'Assets', href: '/admin/assets', paths: ['/admin/assets'] },
+    { label: 'Imports', href: '/admin/imports', paths: ['/admin/imports'] },
+    { label: 'Backups', href: '/admin/backups', paths: ['/admin/backups'] },
+    { label: 'Cleanup', href: '/admin/cleanup', paths: ['/admin/cleanup'] },
+    { label: 'Activity', href: '/admin/activity', paths: ['/admin/activity'] },
+    { label: 'Doctor', href: '/admin/doctor', paths: ['/admin/doctor'] },
+    { label: 'Reload Status', href: '/admin/reload-status', paths: ['/admin/reload-status'] },
+    { label: 'System Health', href: '/admin/system-health', paths: ['/admin/system-health'] },
+    { label: 'DB Integrity', href: '/admin/db-integrity', paths: ['/admin/db-integrity'] },
+    { label: 'Rate Budget', href: '/admin/rate-budget', paths: ['/admin/rate-budget'] },
+    { label: 'Logs', href: '/admin/logs', paths: ['/admin/logs'] },
+    { label: 'API Test', href: '/admin/api-test', paths: ['/admin/api-test'] },
+    { label: 'Config History', href: '/admin/config-history', paths: ['/admin/config-history'] },
+    { label: 'Runbook', href: '/admin/runbook', paths: ['/admin/runbook'] }
+  ];
+
+  function isNavItemActive(item) {
+    return item.paths.some((path) => navCurrentPath === path || (!item.exact && navCurrentPath.startsWith(`${path}/`)));
+  }
+%>
+<nav class="navbar navbar-expand-lg bg-dark navbar-dark">
+  <div class="container">
+    <a class="navbar-brand" href="/admin"><%= navAppName %></a>
+    <div class="navbar-nav ms-auto">
+      <% navItems.forEach((item) => { %>
+        <% const isActive = isNavItemActive(item); %>
+        <a class="nav-link<%= isActive ? ' active' : '' %>"<%= isActive ? ' aria-current="page"' : '' %> href="<%= item.href %>"><%= item.label %></a>
+      <% }) %>
+      <%- include('admin-alert-bell') %>
+      <a class="nav-link" href="/admin/logout">Logout</a>
+    </div>
+  </div>
+</nav>
