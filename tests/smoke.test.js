@@ -582,6 +582,34 @@ test('built-in offline sample fixtures seed history, gaps, and admin health', as
 });
 
 
+
+test('converter supports native Unix OHLCV 60s CSV format', (t) => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'chrono-cache-native-ohlcv-'));
+  const importPath = path.join(tempDir, 'btc-1m.csv');
+
+  t.after(() => fs.rmSync(tempDir, { recursive: true, force: true }));
+
+  fs.writeFileSync(importPath, [
+    'Timestamp,Open,High,Low,Close,Volume',
+    '1704067200,42280.12,42300.50,42190.00,42295.25,12.345',
+    '1704067260,42295.25,42410.00,42280.00,42350.75,8.5'
+  ].join('\n'));
+
+  const { output, report } = convertDumpFile(importPath, {
+    assetId: 'btc',
+    vsCurrency: 'usd',
+    inputFormat: 'unix-ohlcv-60s'
+  });
+
+  assert.equal(report.detectedFormat, 'csv:unix-ohlcv-60s');
+  assert.equal(output.interval, '1m');
+  assert.equal(output.source, 'unix-ohlcv-60s');
+  assert.deepEqual(output.candles.map((candle) => candle.ts), [1704067200000, 1704067260000]);
+  assert.deepEqual(output.candles.map((candle) => candle.volume), [12.345, 8.5]);
+  assert.equal(output.candles[0].open, 42280.12);
+  assert.equal(output.candles[1].close, 42350.75);
+});
+
 test('import inbox registers file hashes once and tracks states', (t) => {
   const db = seedDatabase(t);
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'chrono-cache-import-inbox-'));

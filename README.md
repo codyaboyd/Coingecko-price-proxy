@@ -210,7 +210,7 @@ Useful query parameters:
 
 | Parameter | Default | Description |
 | --- | --- | --- |
-| `interval` | `1d` | Candle size. Supported values are `5m`, `1h`, and `1d`. |
+| `interval` | `1d` | Candle size. Supported values are `1m`, `5m`, `1h`, and `1d`. |
 | `from` / `to` | cached range | ISO date (`2026-01-31`), ISO timestamp, or millisecond timestamp bounds. |
 | `vs` | asset default | Quote currency such as `usd`. Must be a 2-20 character lowercase-compatible code using letters, numbers, `_`, or `-`. |
 | `limit` | `1000` | Maximum candles to return. Must be `1` through `5000`. |
@@ -218,7 +218,7 @@ Useful query parameters:
 | `fill` | `none` | Use `fill=previous` to synthesize missing candles from the previous close. |
 | `cache` | response cache enabled | Use `cache=bypass` to skip the local API response cache. |
 
-Date-range safeguards are interval-specific: `5m` queries allow up to 31 days, `1h` queries allow up to two leap years, and `1d` queries allow up to 20 leap years.
+Date-range safeguards are interval-specific: `1m` and `5m` queries allow up to 31 days, `1h` queries allow up to two leap years, and `1d` queries allow up to 20 leap years.
 
 ### Common query examples
 
@@ -301,7 +301,7 @@ The suite checks that configuration loads, migrations apply, assets validate, fa
 - `npm run repair-gaps -- --asset btc --from 2025-01-01 --to 2025-01-31 --interval 1d` - enqueue and run gap repair fetch jobs in the CLI process.
 - `npm run queue-status` - print persisted scheduler queue counts from SQLite.
 - `npm run import -- ./data/imports/converted/btc-old.normalized.json --policy fill_only_missing` - import normalized historical candles.
-- `npm run convert -- ./data/imports/btc-old.csv --asset btc --vs usd --interval 1d --output data/imports/converted/btc-old.normalized.json` - convert CSV/JSON dumps to normalized import JSON.
+- `npm run convert -- ./data/imports/btc-old.csv --asset btc --vs usd --interval 1d --output data/imports/converted/btc-old.normalized.json` - convert CSV/JSON dumps to normalized import JSON. Add `--input-format unix-ohlcv-60s` for `Timestamp, Open, High, Low, Close, Volume` CSVs with Unix-second 60-second windows.
 - `npm run backup` - alias for `npm run backup-db`.
 - `npm run restore -- ./data/backups/history-YYYY-MM-DD-HH-mm-ss.sqlite` - safely restore a backup from `data/backups`.
 
@@ -454,7 +454,7 @@ Options:
 - `--asset` / `--assetId` - required asset ID.
 - `--from` - optional start timestamp as `YYYY-MM-DD`, ISO date string, or millisecond timestamp.
 - `--to` - optional end timestamp as `YYYY-MM-DD`, ISO date string, or millisecond timestamp.
-- `--interval` - optional candle interval: `5m`, `1h`, or `1d`; defaults to `1d`.
+- `--interval` - optional candle interval: `1m`, `5m`, `1h`, or `1d`; defaults to `1d`.
 - `--vs` / `--vsCurrency` - optional quote currency; defaults to the asset's configured `vsCurrency`.
 - `--format` - optional output format: `csv` or `json`; defaults to `csv`.
 - `--output` - optional destination file path.
@@ -475,7 +475,7 @@ Options:
 - `--asset` / `--assetId` - required asset ID.
 - `--from` - required start timestamp as `YYYY-MM-DD`, ISO date string, or millisecond timestamp.
 - `--to` - required end timestamp as `YYYY-MM-DD`, ISO date string, or millisecond timestamp.
-- `--interval` - optional candle interval: `5m`, `1h`, or `1d`; defaults to `1d`.
+- `--interval` - optional candle interval: `1m`, `5m`, `1h`, or `1d`; defaults to `1d`.
 - `--vs` / `--vsCurrency` - optional quote currency; defaults to the asset's configured `vsCurrency`.
 
 Example:
@@ -642,7 +642,7 @@ The `/api/v3` endpoints resolve CoinGecko coin IDs from the configured asset `co
 
 History parameters:
 
-- `interval`: `5m`, `1h`, or `1d`.
+- `interval`: `1m`, `5m`, `1h`, or `1d`.
 - `from` / `to`: `YYYY-MM-DD`, millisecond timestamp, or ISO-8601 timestamp with timezone.
 - `vs`: 2-20 character quote currency code; defaults to the asset config.
 - `format`: `json` or `csv`.
@@ -655,9 +655,11 @@ The API applies in-memory per-client rate limiting. Limited responses return HTT
 
 1. Copy CSV or JSON files into `data/imports`.
 2. Open `/admin/imports`.
-3. Select a file, asset, interval, and conflict policy.
+3. Select a file, asset, interval, conflict policy, and input format.
 4. Review the preview.
 5. Run the import.
+
+Choose `Unix OHLCV 60s` on the admin import page, or pass `--input-format unix-ohlcv-60s` to the converter CLI, for native CSV files with `Timestamp, Open, High, Low, Close, Volume` headers where `Timestamp` is the Unix-second start of each 60-second window and `Volume` is base-asset volume (for example BTC transacted). The preset imports those files as `1m` candles and stores volume unchanged.
 
 Import preview and import execution resolve real paths and reject absolute paths, `..` traversal, oversized files, non-files, and symlinks that point outside `data/imports`. Raw dumps are converted into `.normalized.json` files under `data/imports/converted`; normalized imports are written to SQLite and recorded in `import_runs`.
 

@@ -139,7 +139,7 @@
                 <div class="list-group-item text-secondary">No files found in <code>data/imports</code>.</div>
               <% } %>
               <% files.forEach((file) => { %>
-                <a class="list-group-item list-group-item-action <%= selectedImportFile && file.id === selectedImportFile.id ? 'active' : '' %>" href="/admin/imports?importFileId=<%= file.id %>&asset=<%= encodeURIComponent(selectedAssetId) %>&interval=<%= encodeURIComponent(selectedInterval) %>&policy=<%= encodeURIComponent(selectedPolicy) %>">
+                <a class="list-group-item list-group-item-action <%= selectedImportFile && file.id === selectedImportFile.id ? 'active' : '' %>" href="/admin/imports?importFileId=<%= file.id %>&asset=<%= encodeURIComponent(selectedAssetId) %>&interval=<%= encodeURIComponent(selectedInterval) %>&inputFormat=<%= encodeURIComponent(selectedInputFormat) %>&policy=<%= encodeURIComponent(selectedPolicy) %>">
                   <div class="d-flex w-100 justify-content-between gap-2">
                     <span class="text-break"><%= file.filename %></span>
                     <span class="badge text-bg-<%= file.status === 'failed' ? 'danger' : (file.status === 'imported' ? 'success' : 'secondary') %>"><%= file.status %></span>
@@ -192,13 +192,21 @@
                     <% }) %>
                   </select>
                 </div>
+                <div class="col-md-4">
+                  <label class="form-label" for="inputFormat">Input format</label>
+                  <select class="form-select" id="inputFormat" name="inputFormat">
+                    <% inputFormats.forEach((format) => { %>
+                      <option value="<%= format %>" <%= format === selectedInputFormat ? 'selected' : '' %>><%= format === 'unix-ohlcv-60s' ? 'Unix OHLCV 60s' : 'Auto-detect' %></option>
+                    <% }) %>
+                  </select>
+                </div>
                 <div class="col-12">
-                  <div class="form-text">Column mapping is auto-detected from common timestamp, OHLC, volume, and market-cap headers. Validate the preview before importing.</div>
+                  <div class="form-text">Column mapping is auto-detected from common timestamp, OHLC, volume, and market-cap headers. Choose Unix OHLCV 60s for <code>Timestamp, Open, High, Low, Close, Volume</code> CSV files whose timestamps are Unix seconds and whose windows are 60 seconds; this imports them as <code>1m</code> candles.</div>
                 </div>
                 <div class="col-12 d-flex flex-wrap gap-2">
                   <button type="submit" class="btn btn-primary" <%= (files.length === 0 || maintenanceMode || (selectedImportFile && selectedImportFile.status === 'imported')) ? 'disabled' : '' %>>Convert, validate, and import</button>
                   <% if (selectedImportFile) { %>
-                    <a class="btn btn-outline-secondary" href="/admin/imports?importFileId=<%= selectedImportFile.id %>&asset=<%= encodeURIComponent(selectedAssetId) %>&interval=<%= encodeURIComponent(selectedInterval) %>&policy=<%= encodeURIComponent(selectedPolicy) %>">Preview / refresh</a>
+                    <a class="btn btn-outline-secondary" href="/admin/imports?importFileId=<%= selectedImportFile.id %>&asset=<%= encodeURIComponent(selectedAssetId) %>&interval=<%= encodeURIComponent(selectedInterval) %>&inputFormat=<%= encodeURIComponent(selectedInputFormat) %>&policy=<%= encodeURIComponent(selectedPolicy) %>">Preview / refresh</a>
                   <% } %>
                 </div>
               </form>
