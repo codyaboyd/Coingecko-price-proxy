@@ -1,4 +1,26 @@
 (() => {
+  const uploadForm = document.querySelector('[data-import-upload-form]');
+
+  if (uploadForm) {
+    const fileInput = uploadForm.querySelector('[data-import-upload-input]');
+    const chooseButton = uploadForm.querySelector('[data-import-upload-button]');
+    const fileNameInput = uploadForm.querySelector('[data-import-upload-name]');
+    const submitButton = uploadForm.querySelector('[data-import-upload-submit]');
+
+    if (fileInput && chooseButton && fileNameInput && submitButton) {
+      chooseButton.addEventListener('click', () => {
+        fileInput.click();
+      });
+
+      fileInput.addEventListener('change', () => {
+        const selectedFile = fileInput.files && fileInput.files.length > 0 ? fileInput.files[0] : null;
+        const maintenanceMode = submitButton.dataset.importUploadMaintenance === 'true';
+        fileNameInput.value = selectedFile ? selectedFile.name : '';
+        submitButton.disabled = !selectedFile || maintenanceMode;
+      });
+    }
+  }
+
   const form = document.querySelector('[data-import-form]');
 
   if (!form) {

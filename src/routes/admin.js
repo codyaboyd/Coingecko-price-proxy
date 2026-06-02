@@ -35,6 +35,7 @@ const { createPortableBundle } = require('../../scripts/create-portable-bundle')
 const router = express.Router();
 const MAX_IMPORT_FILE_BYTES = 50 * 1024 * 1024;
 const MAX_ADMIN_FETCH_RANGE_MS = 366 * DAY_MS;
+const IMPORT_UPLOAD_FIELD = 'importUpload';
 
 
 function isRequestInMaintenanceMode(req) {
@@ -102,6 +103,134 @@ function getImportArchiveDirectory(req) {
 
 function getImportFailedDirectory(req) {
   return path.join(getImportsDirectory(req), 'failed');
+}
+
+function sanitizeUploadFileName(fileName) {
+  const baseName = path.basename(String(fileName || '').trim());
+  const safeName = baseName.replace(/[^a-z0-9_.-]/gi, '-').replace(/^-+/, '').slice(0, 180);
+  return safeName || `import-${Date.now()}`;
+}
+
+function buildUniqueImportUploadPath(importsDir, fileName) {
+  const parsed = path.parse(sanitizeUploadFileName(fileName));
+  const baseName = parsed.name || 'import';
+  const extension = parsed.ext || '';
+  let candidate = path.join(importsDir, `${baseName}${extension}`);
+  let suffix = 1;
+
+  while (fs.existsSync(candidate)) {
+    candidate = path.join(importsDir, `${baseName}-${suffix}${extension}`);
+    suffix += 1;
+  }
+
+  return candidate;
+}
+
+function collectMultipartRequest(req, maxBytes = MAX_IMPORT_FILE_BYTES) {
+  return new Promise((resolve, reject) => {
+    const chunks = [];
+    let totalBytes = 0;
+
+    req.on('data', (chunk) => {
+      totalBytes += chunk.length;
+
+      if (totalBytes > maxBytes) {
+        const error = new Error('Import upload is too large for the admin inbox.');
+        error.status = 413;
+        req.destroy(error);
+        return;
+      }
+
+      chunks.push(chunk);
+    });
+
+    req.on('end', () => resolve(Buffer.concat(chunks, totalBytes)));
+    req.on('error', reject);
+  });
+}
+
+function parseMultipartFileUpload(body, contentType, fieldName) {
+  const boundaryMatch = String(contentType || '').match(/(?:^|;)\s*boundary=([^;]+)/i);
+
+  if (!boundaryMatch) {
+    const error = new Error('File upload must use multipart/form-data.');
+    error.status = 400;
+    throw error;
+  }
+
+  const boundaryValue = boundaryMatch[1].replace(/^"|"$/g, '');
+  const boundary = Buffer.from(`--${boundaryValue}`);
+  let cursor = body.indexOf(boundary);
+
+  while (cursor !== -1) {
+    const partStart = cursor + boundary.length;
+
+    if (body.slice(partStart, partStart + 2).toString('latin1') === '--') {
+      break;
+    }
+
+    const headerStart = body.slice(partStart, partStart + 2).toString('latin1') === '\r\n' ? partStart + 2 : partStart;
+    const headerEnd = body.indexOf(Buffer.from('\r\n\r\n'), headerStart);
+
+    if (headerEnd === -1) {
+      break;
+    }
+
+    const headers = body.slice(headerStart, headerEnd).toString('latin1');
+    const disposition = headers.split(/\r\n/).find((header) => /^content-disposition:/i.test(header)) || '';
+    const nameMatch = disposition.match(/(?:^|;)\s*name="([^"]+)"/i);
+    const filenameMatch = disposition.match(/(?:^|;)\s*filename="([^"]*)"/i);
+    const contentStart = headerEnd + 4;
+    const nextBoundary = body.indexOf(boundary, contentStart);
+
+    if (nextBoundary === -1) {
+      break;
+    }
+
+    let contentEnd = nextBoundary;
+
+    if (contentEnd >= 2 && body[contentEnd - 2] === 13 && body[contentEnd - 1] === 10) {
+      contentEnd -= 2;
+    }
+
+    if (nameMatch && nameMatch[1] === fieldName && filenameMatch) {
+      return {
+        filename: filenameMatch[1],
+        content: body.slice(contentStart, contentEnd)
+      };
+    }
+
+    cursor = nextBoundary;
+  }
+
+  const error = new Error('Choose a CSV or JSON file before adding it to the inbox.');
+  error.status = 400;
+  throw error;
+}
+
+async function saveImportUpload(req) {
+  const importsDir = getImportsDirectory(req);
+  ensureImportInboxDirectories(req);
+  const body = await collectMultipartRequest(req);
+  const upload = parseMultipartFileUpload(body, req.headers['content-type'], IMPORT_UPLOAD_FIELD);
+
+  if (!upload.filename || upload.content.length === 0) {
+    const error = new Error('Choose a non-empty import file before adding it to the inbox.');
+    error.status = 400;
+    throw error;
+  }
+
+  if (upload.content.length > MAX_IMPORT_FILE_BYTES) {
+    const error = new Error('Import upload is too large for the admin inbox.');
+    error.status = 413;
+    throw error;
+  }
+
+  const targetPath = buildUniqueImportUploadPath(importsDir, upload.filename);
+  fs.writeFileSync(targetPath, upload.content, { flag: 'wx' });
+  const safePath = assertInsideDirectory(importsDir, targetPath, 'Import upload cannot be saved outside data/imports.');
+  const relativeName = path.relative(importsDir, safePath);
+  return registerImportFile(getDatabase(req), safePath, { filename: relativeName });
 }
 
 function ensureImportInboxDirectories(req) {
@@ -1246,6 +1375,24 @@ router.get('/imports', (req, res, next) => {
     renderImportsPage(req, res);
   } catch (error) {
     next(error);
+  }
+});
+
+router.post('/imports/upload', async (req, res, next) => {
+  try {
+    requireMaintenanceDisabled(req, 'Maintenance mode is active; imports are paused.');
+    const importFile = await saveImportUpload(req);
+
+    recordAdminEvent(req, {
+      action: 'import upload',
+      entityType: 'import',
+      entityId: importFile.id,
+      details: { fileName: importFile.filename, status: importFile.status }
+    });
+
+    res.redirect(`/admin/imports?importFileId=${importFile.id}`);
+  } catch (error) {
+    renderImportsPage(req, res, { error: error.message });
   }
 });
 
