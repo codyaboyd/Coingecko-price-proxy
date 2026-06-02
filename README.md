@@ -623,6 +623,23 @@ curl http://127.0.0.1:3000/api/v1/assets
 curl 'http://127.0.0.1:3000/api/v1/history/btc?interval=1d&from=2026-01-01&to=2026-01-31&limit=1000'
 ```
 
+CoinGecko-compatible drop-in endpoints are also exposed under `/api/v3`, so clients that already call CoinGecko can point their base URL at this service and keep the same response shapes for common price/history reads:
+
+```bash
+curl 'http://127.0.0.1:3000/api/v3/simple/price?ids=bitcoin&vs_currencies=usd&include_market_cap=true&include_24hr_vol=true&include_last_updated_at=true'
+curl 'http://127.0.0.1:3000/api/v3/coins/bitcoin/market_chart?vs_currency=usd&days=max&interval=daily'
+curl 'http://127.0.0.1:3000/api/v3/coins/bitcoin/market_chart/range?vs_currency=usd&from=2026-01-01&to=2026-01-31&interval=daily'
+```
+
+Supported CoinGecko-compatible endpoints:
+
+- `GET /api/v3/ping`
+- `GET /api/v3/simple/price` with comma-separated `ids` and `vs_currencies`; optional `include_market_cap`, `include_24hr_vol`, `include_last_updated_at`, and `precision`.
+- `GET /api/v3/coins/:id/market_chart` with `vs_currency`, `days`, optional `interval` (`5m`, `hourly`, `daily`), and optional `precision`.
+- `GET /api/v3/coins/:id/market_chart/range` with `vs_currency`, `from`, `to`, optional `interval` (`5m`, `hourly`, `daily`), and optional `precision`.
+
+The `/api/v3` endpoints resolve CoinGecko coin IDs from the configured asset `coingeckoId` values, read only the local cache, and return CoinGecko-style `prices`, `market_caps`, and `total_volumes` arrays where applicable.
+
 History parameters:
 
 - `interval`: `5m`, `1h`, or `1d`.

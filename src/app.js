@@ -5,6 +5,7 @@ const path = require('path');
 const adminAuthRoutes = require('./routes/admin-auth');
 const adminRoutes = require('./routes/admin');
 const apiV1Routes = require('./routes/api-v1');
+const coingeckoV3Routes = require('./routes/coingecko-v3');
 const docsRoutes = require('./routes/docs');
 const healthRoutes = require('./routes/health');
 const { errorHandler, notFoundHandler } = require('./middleware/error-handlers');
@@ -49,6 +50,8 @@ function createApp(config) {
   app.use('/api/v1', createRateLimit());
   app.use('/api/v1/admin', requireAdminSession({ api: true }));
   app.use('/api/v1', apiV1Routes);
+  app.use('/api/v3', createRateLimit());
+  app.use('/api/v3', coingeckoV3Routes);
   app.use('/health', healthRoutes);
   app.use('/admin', requireAdminSession(), adminRoutes);
 

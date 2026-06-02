@@ -316,6 +316,31 @@ test('fake candles insert and history API returns candles while invalid asset re
 
   assert.equal(missingResponse.status, 404);
   assert.equal(missingBody.error.code, 'asset_not_found');
+
+  const from = Math.floor(firstDay / 1000);
+  const to = Math.floor((firstDay + DAY_MS) / 1000);
+  const marketChartResponse = await fetch(`${baseUrl}/api/v3/coins/bitcoin/market_chart/range?vs_currency=usd&from=${from}&to=${to}&interval=daily`);
+  const marketChart = await marketChartResponse.json();
+
+  assert.equal(marketChartResponse.status, 200);
+  assert.deepEqual(marketChart.prices, [[firstDay, 42500], [firstDay + DAY_MS, 43500]]);
+  assert.deepEqual(marketChart.market_caps, [[firstDay, 850000000000], [firstDay + DAY_MS, 870000000000]]);
+  assert.deepEqual(marketChart.total_volumes, [[firstDay, 123.45], [firstDay + DAY_MS, 234.56]]);
+
+  const chartResponse = await fetch(`${baseUrl}/api/v3/coins/bitcoin/market_chart?vs_currency=usd&days=max&interval=daily`);
+  const chart = await chartResponse.json();
+
+  assert.equal(chartResponse.status, 200);
+  assert.deepEqual(chart.prices, marketChart.prices);
+
+  const simplePriceResponse = await fetch(`${baseUrl}/api/v3/simple/price?ids=bitcoin&vs_currencies=usd&include_market_cap=true&include_24hr_vol=true&include_last_updated_at=true`);
+  const simplePrice = await simplePriceResponse.json();
+
+  assert.equal(simplePriceResponse.status, 200);
+  assert.equal(simplePrice.bitcoin.usd, 43500);
+  assert.equal(simplePrice.bitcoin.usd_market_cap, 870000000000);
+  assert.equal(simplePrice.bitcoin.usd_24h_vol, 234.56);
+  assert.equal(simplePrice.bitcoin.last_updated_at, to);
 });
 
 
