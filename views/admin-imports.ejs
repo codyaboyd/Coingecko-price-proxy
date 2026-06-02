@@ -18,7 +18,7 @@
       <div class="d-flex justify-content-between align-items-start flex-wrap gap-3 mb-4">
         <div>
           <h1 class="mb-1">Import inbox</h1>
-          <p class="text-secondary mb-0">Drop raw CSV or JSON files into <code>data/imports</code>. Files are hashed, registered once, and never deleted automatically.</p>
+          <p class="text-secondary mb-0">Choose a raw CSV or JSON file from your computer, or drop files into <code>data/imports</code>. Files are hashed, registered once, and never deleted automatically.</p>
         </div>
         <a href="/admin" class="btn btn-outline-secondary">Back to dashboard</a>
       </div>
@@ -44,6 +44,29 @@
           <% } %>
         </div>
       <% } %>
+
+
+      <div class="card shadow-sm mb-4">
+        <div class="card-header bg-white">
+          <h2 class="h5 mb-0">Add file to import inbox</h2>
+        </div>
+        <div class="card-body">
+          <form method="post" action="/admin/imports/upload" enctype="multipart/form-data" class="row g-3 align-items-end" data-import-upload-form>
+            <div class="col-12 col-lg-8">
+              <label class="form-label" for="importUploadName">Local import file</label>
+              <input class="visually-hidden" type="file" id="importUpload" name="importUpload" accept=".csv,.json,application/json,text/csv" data-import-upload-input>
+              <div class="input-group import-file-picker">
+                <button class="btn btn-outline-secondary" type="button" data-import-upload-button>Choose file</button>
+                <input class="form-control" id="importUploadName" type="text" value="" placeholder="No file selected" readonly data-import-upload-name>
+              </div>
+              <div class="form-text">The selected file is copied into <code>data/imports</code> so it can be previewed, converted, and imported.</div>
+            </div>
+            <div class="col-12 col-lg-4">
+              <button class="btn btn-primary w-100" type="submit" disabled data-import-upload-submit data-import-upload-maintenance="<%= maintenanceMode ? 'true' : 'false' %>">Add to inbox</button>
+            </div>
+          </form>
+        </div>
+      </div>
 
       <div class="card shadow-sm mb-4">
         <div class="card-header bg-white">
