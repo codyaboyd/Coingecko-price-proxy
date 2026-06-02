@@ -1,4 +1,5 @@
 const INTERVAL_MS = {
+  '1m': 60 * 1000,
   '5m': 5 * 60 * 1000,
   '1h': 60 * 60 * 1000,
   '1d': 24 * 60 * 60 * 1000
@@ -10,13 +11,13 @@ function isPlainObject(value) {
 
 function normalizeInterval(interval) {
   if (typeof interval !== 'string') {
-    throw new Error('interval must be one of: 5m, 1h, 1d.');
+    throw new Error('interval must be one of: 1m, 5m, 1h, 1d.');
   }
 
   const normalized = interval.trim().toLowerCase();
 
   if (!Object.prototype.hasOwnProperty.call(INTERVAL_MS, normalized)) {
-    throw new Error('interval must be one of: 5m, 1h, 1d.');
+    throw new Error('interval must be one of: 1m, 5m, 1h, 1d.');
   }
 
   return normalized;

@@ -7,11 +7,13 @@ const { DAY_MS, parseDateInput } = require('../utils/date');
 const router = express.Router();
 
 const COINGECKO_INTERVALS = {
+  '1m': '1m',
+  minutely: '1m',
   '5m': '5m',
   hourly: '1h',
   daily: '1d'
 };
-const SIMPLE_PRICE_INTERVALS = ['5m', '1h', '1d'];
+const SIMPLE_PRICE_INTERVALS = ['1m', '5m', '1h', '1d'];
 const DEFAULT_RANGE_LIMIT = 5000;
 const MAX_RANGE_LIMIT = 5000;
 
@@ -130,7 +132,7 @@ function normalizeCoinGeckoInterval(value, spanMs) {
     const interval = COINGECKO_INTERVALS[normalized];
 
     if (!interval || !SUPPORTED_INTERVALS.has(interval)) {
-      throw createCoinGeckoError(400, 'interval must be one of: 5m, hourly, daily');
+      throw createCoinGeckoError(400, 'interval must be one of: 1m, minutely, 5m, hourly, daily');
     }
 
     return interval;

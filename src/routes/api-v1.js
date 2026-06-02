@@ -29,11 +29,13 @@ const DEFAULT_FILL = 'none';
 const DEFAULT_HISTORY_LIMIT = 1000;
 const MAX_HISTORY_LIMIT = 5000;
 const MAX_RANGE_MS_BY_INTERVAL = {
+  '1m': 7 * DAY_MS,
   '5m': 31 * DAY_MS,
   '1h': 2 * 366 * DAY_MS,
   '1d': 20 * 366 * DAY_MS
 };
 const INTERVAL_DURATIONS = {
+  '1m': 60 * 1000,
   '5m': 5 * 60 * 1000,
   '1h': 60 * 60 * 1000,
   '1d': 24 * 60 * 60 * 1000

@@ -61,6 +61,73 @@
         </div>
       </div>
 
+      <div class="card shadow-sm mb-4">
+        <div class="card-header bg-white d-flex justify-content-between align-items-center flex-wrap gap-2">
+          <div>
+            <h2 class="h5 mb-0">Market data coverage and import gaps</h2>
+            <p class="text-secondary small mb-0">Review stored candles for each configured currency and identify remaining market data that imports can fill.</p>
+          </div>
+          <span class="badge text-bg-secondary"><%= intervals.join(' · ') %></span>
+        </div>
+        <div class="card-body">
+          <% if (!marketDataCoverage || marketDataCoverage.length === 0) { %>
+            <p class="text-secondary mb-0">No configured currencies are available to summarize.</p>
+          <% } else { %>
+            <div class="table-responsive">
+              <table class="table table-sm table-striped align-middle mb-0">
+                <thead>
+                  <tr>
+                    <th>Currency</th>
+                    <th>Interval</th>
+                    <th>Stored data</th>
+                    <th>Range</th>
+                    <th>Remaining import opportunities</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <% marketDataCoverage.forEach((coverage) => { %>
+                    <% coverage.intervals.forEach((intervalCoverage, index) => { %>
+                      <tr>
+                        <% if (index === 0) { %>
+                          <td rowspan="<%= coverage.intervals.length %>">
+                            <div class="fw-semibold"><%= coverage.asset.symbol %> — <%= coverage.asset.id %></div>
+                            <small class="text-secondary">vs <code><%= coverage.vsCurrency %></code></small>
+                          </td>
+                        <% } %>
+                        <td><code><%= intervalCoverage.interval %></code></td>
+                        <td>
+                          <%= intervalCoverage.candleCount.toLocaleString() %> candle(s)
+                          <% if (intervalCoverage.expectedCount > 0) { %>
+                            <br><small class="text-secondary"><%= intervalCoverage.expectedCount.toLocaleString() %> expected in stored range</small>
+                          <% } %>
+                        </td>
+                        <td>
+                          <% if (intervalCoverage.earliestIso) { %>
+                            <small><%= intervalCoverage.earliestIso %><br><%= intervalCoverage.latestIso %></small>
+                          <% } else { %>
+                            <span class="text-secondary">—</span>
+                          <% } %>
+                        </td>
+                        <td>
+                          <% if (intervalCoverage.missingCandles === 0 && intervalCoverage.missingFieldTotal === 0) { %>
+                            <span class="badge text-bg-success">Complete</span>
+                          <% } else if (intervalCoverage.candleCount === 0) { %>
+                            <span class="badge text-bg-warning">Import needed</span>
+                          <% } else { %>
+                            <span class="badge text-bg-info">Fill blanks</span>
+                          <% } %>
+                          <div class="small mt-1"><%= intervalCoverage.importSummary %></div>
+                        </td>
+                      </tr>
+                    <% }) %>
+                  <% }) %>
+                </tbody>
+              </table>
+            </div>
+          <% } %>
+        </div>
+      </div>
+
       <div class="row g-4">
         <section class="col-lg-4">
           <div class="card shadow-sm mb-4">

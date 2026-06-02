@@ -192,7 +192,7 @@ function buildOpenApiDocument(options = {}) {
           summary: 'Read cached OHLCV history for one asset',
           parameters: [
             { name: 'assetId', in: 'path', required: true, schema: { type: 'string' }, example: asset.id },
-            { name: 'interval', in: 'query', required: false, schema: { type: 'string', enum: ['5m', '1h', '1d'], default: '1d' } },
+            { name: 'interval', in: 'query', required: false, schema: { type: 'string', enum: ['1m', '5m', '1h', '1d'], default: '1d' } },
             { name: 'from', in: 'query', required: false, schema: { type: 'string' }, description: 'ISO date, ISO timestamp, or millisecond timestamp.' },
             { name: 'to', in: 'query', required: false, schema: { type: 'string' }, description: 'ISO date, ISO timestamp, or millisecond timestamp.' },
             { name: 'vs', in: 'query', required: false, schema: { type: 'string', default: asset.vsCurrency } },
@@ -203,7 +203,7 @@ function buildOpenApiDocument(options = {}) {
           ],
           responses: {
             200: jsonResponse('History response with matching candles.', historyExample),
-            400: errorResponse(400, 'invalid_interval', 'interval must be one of: 5m, 1h, 1d.'),
+            400: errorResponse(400, 'invalid_interval', 'interval must be one of: 1m, 5m, 1h, 1d.'),
             404: errorResponse(404, 'asset_not_found', `Asset '${asset.id}' was not found.`)
           }
         }

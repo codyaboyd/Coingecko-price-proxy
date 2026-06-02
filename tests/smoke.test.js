@@ -439,6 +439,32 @@ test('import converter handles a sample CSV fixture', () => {
 });
 
 
+
+test('history import accepts one-minute candles', (t) => {
+  const db = seedDatabase(t);
+  const baseTs = Date.UTC(2026, 0, 1, 0, 0, 0);
+
+  const result = insertCandles([
+    { ts: baseTs, open: 100, high: 101, low: 99, close: 100.5, volume: 10, marketCap: 1000 },
+    { ts: baseTs + 60_000, open: 100.5, high: 102, low: 100, close: 101.5, volume: 11, marketCap: 1010 }
+  ], {
+    db,
+    assetId: 'btc',
+    vsCurrency: 'usd',
+    interval: '1m',
+    fetchedAt: baseTs
+  });
+
+  assert.equal(result.received, 2);
+  assert.equal(result.changed, 2);
+  assert.equal(db.prepare("SELECT COUNT(*) AS count FROM candles WHERE interval = '1m'").get().count, 2);
+
+  const gapReport = getGapReport('btc', 'usd', '1m', baseTs, baseTs + (2 * 60_000), { db });
+  assert.equal(gapReport.expectedCount, 3);
+  assert.equal(gapReport.foundCount, 2);
+  assert.equal(gapReport.missingCount, 1);
+});
+
 test('built-in offline sample fixtures seed history, gaps, and admin health', async (t) => {
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'chrono-cache-sample-seed-'));
   const databasePath = path.join(tempDir, 'history.sqlite');

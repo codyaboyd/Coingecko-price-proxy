@@ -15,7 +15,7 @@ const { clearApiCache, getApiCacheStats } = require('../services/api-cache');
 const { createBackupService } = require('../services/backup-service');
 const { RESTORE_CONFIRMATION_PHRASE, restoreBackup } = require('../services/restore-service');
 const { configureCoinGeckoDefaults, createCoinGeckoClient, fetchMarketChartRange } = require('../services/coingecko');
-const { getGapReport } = require('../services/cache-policy');
+const { getGapReport, INTERVAL_STEPS_MS } = require('../services/cache-policy');
 const { getGlobalRateBudgetService } = require('../services/rate-budget-service');
 const { getGlobalLimiter } = require('../utils/limiter');
 const { buildSystemHealth, bytesToSummary } = require('../services/system-health');
@@ -267,6 +267,104 @@ function previewImportFile(filePath, options) {
   };
 }
 
+
+function formatCoverageTimestamp(timestamp) {
+  return timestamp === null || timestamp === undefined ? null : new Date(timestamp).toISOString();
+}
+
+function summarizeMissingMarketFields(row) {
+  const fields = [
+    ['open', row.missing_open],
+    ['high', row.missing_high],
+    ['low', row.missing_low],
+    ['volume', row.missing_volume],
+    ['market cap', row.missing_market_cap]
+  ];
+
+  return fields
+    .filter(([, count]) => Number(count) > 0)
+    .map(([field, count]) => ({ field, count: Number(count) }));
+}
+
+function buildMarketDataCoverageSummary(db, assets, intervals) {
+  const rows = db.prepare(`
+    SELECT
+      asset_id,
+      vs_currency,
+      interval,
+      COUNT(*) AS candle_count,
+      MIN(ts) AS earliest_ts,
+      MAX(ts) AS latest_ts,
+      SUM(CASE WHEN open IS NULL THEN 1 ELSE 0 END) AS missing_open,
+      SUM(CASE WHEN high IS NULL THEN 1 ELSE 0 END) AS missing_high,
+      SUM(CASE WHEN low IS NULL THEN 1 ELSE 0 END) AS missing_low,
+      SUM(CASE WHEN volume IS NULL THEN 1 ELSE 0 END) AS missing_volume,
+      SUM(CASE WHEN market_cap IS NULL THEN 1 ELSE 0 END) AS missing_market_cap
+    FROM candles
+    GROUP BY asset_id, vs_currency, interval
+  `).all();
+  const byAssetCurrencyInterval = new Map(rows.map((row) => [
+    `${row.asset_id}:${row.vs_currency}:${row.interval}`,
+    row
+  ]));
+
+  return assets.map((asset) => {
+    const vsCurrency = String(asset.vsCurrency || 'usd').trim().toLowerCase();
+
+    return {
+      asset,
+      vsCurrency,
+      intervals: intervals.map((interval) => {
+        const row = byAssetCurrencyInterval.get(`${asset.id}:${vsCurrency}:${interval}`) || null;
+
+        if (!row || Number(row.candle_count) === 0) {
+          return {
+            interval,
+            candleCount: 0,
+            earliestIso: null,
+            latestIso: null,
+            expectedCount: 0,
+            missingCandles: null,
+            missingFields: [],
+            importSummary: 'No local candles yet; import a complete dataset for this interval.'
+          };
+        }
+
+        const stepMs = INTERVAL_STEPS_MS[interval];
+        const expectedCount = stepMs
+          ? Math.floor((Number(row.latest_ts) - Number(row.earliest_ts)) / stepMs) + 1
+          : Number(row.candle_count);
+        const missingCandles = Math.max(0, expectedCount - Number(row.candle_count));
+        const missingFields = summarizeMissingMarketFields(row);
+        const missingFieldTotal = missingFields.reduce((total, item) => total + item.count, 0);
+        const importSummaryParts = [];
+
+        if (missingCandles > 0) {
+          importSummaryParts.push(`${missingCandles.toLocaleString()} missing candle timestamp(s)`);
+        }
+
+        missingFields.forEach((item) => {
+          importSummaryParts.push(`${item.count.toLocaleString()} row(s) missing ${item.field}`);
+        });
+
+        return {
+          interval,
+          candleCount: Number(row.candle_count),
+          earliestIso: formatCoverageTimestamp(row.earliest_ts),
+          latestIso: formatCoverageTimestamp(row.latest_ts),
+          expectedCount,
+          missingCandles,
+          missingFields,
+          missingFieldTotal,
+          importSummary: importSummaryParts.length > 0
+            ? importSummaryParts.join('; ')
+            : 'Complete within the stored range.'
+        };
+      })
+    };
+  });
+}
+
 function renderImportsPage(req, res, extras = {}) {
   const config = req.app.get('config');
   const assets = getConfiguredAssets(req);
@@ -280,6 +378,7 @@ function renderImportsPage(req, res, extras = {}) {
   const selectedAsset = assets.find((asset) => asset.id === selectedAssetId) || assets[0] || null;
   const selectedInterval = extras.interval || req.query.interval || (selectedImportFile && selectedImportFile.interval) || '1d';
   const selectedPolicy = extras.policy || req.query.policy || DEFAULT_CONFLICT_POLICY;
+  const intervals = Array.from(SUPPORTED_INTERVALS);
   let preview = extras.preview || null;
   let previewError = extras.previewError || null;
 
@@ -319,8 +418,9 @@ function renderImportsPage(req, res, extras = {}) {
     appName: config.appName,
     assets,
     files,
-    intervals: Array.from(SUPPORTED_INTERVALS),
+    intervals,
     policies: Array.from(CONFLICT_POLICIES),
+    marketDataCoverage: buildMarketDataCoverageSummary(getDatabase(req), assets, intervals),
     selectedImportFile,
     selectedFile,
     selectedAssetId,

@@ -1,8 +1,9 @@
 const { openDatabase } = require('../db/node-sqlite');
 const { loadServerConfig } = require('../utils/config');
 
-const SUPPORTED_INTERVALS = new Set(['5m', '1h', '1d']);
+const SUPPORTED_INTERVALS = new Set(['1m', '5m', '1h', '1d']);
 const INTERVAL_STEPS_MS = {
+  '1m': 60 * 1000,
   '5m': 5 * 60 * 1000,
   '1h': 60 * 60 * 1000,
   '1d': 24 * 60 * 60 * 1000
