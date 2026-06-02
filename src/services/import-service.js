@@ -186,6 +186,15 @@ function updateImportFile(db, id, patch = {}) {
 
 const TIMESTAMP_UNITS = new Set(['auto', 'ms', 's']);
 const SUPPORTED_TIMEZONES = new Set(['utc']);
+const INPUT_FORMATS = new Set(['auto', 'unix-ohlcv-60s']);
+
+const INPUT_FORMAT_PRESETS = {
+  'unix-ohlcv-60s': {
+    interval: '1m',
+    timestampUnit: 's',
+    source: 'unix-ohlcv-60s'
+  }
+};
 
 const COLUMN_ALIASES = {
   timestamp: ['timestamp', 'ts', 'date', 'time', 'datetime', 'open_time', 'opentime', 'start_time', 'starttime'],
@@ -232,6 +241,16 @@ function normalizeTimezone(value) {
 
   if (!SUPPORTED_TIMEZONES.has(normalized)) {
     throw new Error('--timezone currently supports only utc.');
+  }
+
+  return normalized;
+}
+
+function normalizeInputFormat(value) {
+  const normalized = value === undefined || value === null ? 'auto' : String(value).trim().toLowerCase();
+
+  if (!INPUT_FORMATS.has(normalized)) {
+    throw new Error(`--input-format must be one of: ${Array.from(INPUT_FORMATS).join(', ')}.`);
   }
 
   return normalized;
@@ -445,7 +464,7 @@ function convertCsv(text, options) {
   });
 
   return {
-    detectedFormat: 'csv:columns',
+    detectedFormat: options.inputFormat === 'unix-ohlcv-60s' ? 'csv:unix-ohlcv-60s' : 'csv:columns',
     rowsSeen: Math.max(rows.length - 1, 0),
     rowsSkipped: skipped,
     candles
@@ -641,15 +660,18 @@ function buildOutput(candles, options) {
 
 function normalizeOptions(options = {}) {
   const assetId = normalizeRequiredString(options.assetId || options.asset, 'assetId');
+  const inputFormat = normalizeInputFormat(options.inputFormat || options.input_format || options.formatPreset || options.format_preset);
+  const preset = INPUT_FORMAT_PRESETS[inputFormat] || {};
 
   return {
     assetId,
     symbol: normalizeOptionalString(options.symbol, assetId),
     vsCurrency: normalizeRequiredString(options.vsCurrency || options.vs || 'usd', 'vsCurrency'),
-    interval: normalizeRequiredString(options.interval || '1d', 'interval'),
-    source: normalizeOptionalString(options.source, 'import'),
-    timestampUnit: normalizeTimestampUnit(options.timestampUnit || options.timestamp_unit),
-    timezone: normalizeTimezone(options.timezone)
+    interval: normalizeRequiredString(preset.interval || options.interval || '1d', 'interval'),
+    source: normalizeOptionalString(options.source, preset.source || 'import'),
+    timestampUnit: normalizeTimestampUnit(preset.timestampUnit || options.timestampUnit || options.timestamp_unit),
+    timezone: normalizeTimezone(options.timezone),
+    inputFormat
   };
 }
 
@@ -847,6 +869,7 @@ function previewNormalizedHistoryFile(inputPath, limit = 25) {
 
 module.exports = {
   IMPORT_FILE_STATUSES,
+  INPUT_FORMATS,
   convertDumpFile,
   convertDumpText,
   getImportFile,

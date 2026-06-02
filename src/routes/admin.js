@@ -5,7 +5,7 @@ const path = require('path');
 const { getAssetCandleBounds, getConfigChange, getNextConfigChangeForFile, getPublicAsset, listConfigChanges, listFetchRunsForAsset, upsertAssets } = require('../db/queries');
 const { readAssetConfig, loadAssets } = require('../services/asset-service');
 const { CONFLICT_POLICIES, DEFAULT_CONFLICT_POLICY, SUPPORTED_INTERVALS, countCandles } = require('../services/history-service');
-const { convertDumpFile, getImportFile, importNormalizedHistoryFile, listImportFiles, previewNormalizedHistoryFile, registerImportFile, updateImportFile } = require('../services/import-service');
+const { INPUT_FORMATS, convertDumpFile, getImportFile, importNormalizedHistoryFile, listImportFiles, previewNormalizedHistoryFile, registerImportFile, updateImportFile } = require('../services/import-service');
 const { ensureDirectory, resolveFromRoot } = require('../utils/files');
 const { enqueueBackfill } = require('../jobs/backfill-job');
 const { createScheduler } = require('../jobs/scheduler');
@@ -376,7 +376,12 @@ function renderImportsPage(req, res, extras = {}) {
   const selectedFile = selectedImportFile ? selectedImportFile.filename : null;
   const selectedAssetId = extras.assetId || req.query.asset || (selectedImportFile && selectedImportFile.assetId) || (assets[0] || {}).id || '';
   const selectedAsset = assets.find((asset) => asset.id === selectedAssetId) || assets[0] || null;
-  const selectedInterval = extras.interval || req.query.interval || (selectedImportFile && selectedImportFile.interval) || '1d';
+  const selectedInputFormat = Array.from(INPUT_FORMATS).includes(extras.inputFormat || req.query.inputFormat)
+    ? (extras.inputFormat || req.query.inputFormat)
+    : 'auto';
+  const selectedInterval = selectedInputFormat === 'unix-ohlcv-60s'
+    ? '1m'
+    : (extras.interval || req.query.interval || (selectedImportFile && selectedImportFile.interval) || '1d');
   const selectedPolicy = extras.policy || req.query.policy || DEFAULT_CONFLICT_POLICY;
   const intervals = Array.from(SUPPORTED_INTERVALS);
   let preview = extras.preview || null;
@@ -388,7 +393,8 @@ function renderImportsPage(req, res, extras = {}) {
         assetId: selectedAsset.id,
         symbol: selectedAsset.symbol,
         vsCurrency: selectedAsset.vsCurrency,
-        interval: selectedInterval
+        interval: selectedInterval,
+        inputFormat: selectedInputFormat
       });
       updateImportFile(getDatabase(req), selectedImportFile.id, {
         status: selectedImportFile.status === 'pending' ? 'previewed' : selectedImportFile.status,
@@ -419,12 +425,14 @@ function renderImportsPage(req, res, extras = {}) {
     assets,
     files,
     intervals,
+    inputFormats: Array.from(INPUT_FORMATS),
     policies: Array.from(CONFLICT_POLICIES),
     marketDataCoverage: buildMarketDataCoverageSummary(getDatabase(req), assets, intervals),
     selectedImportFile,
     selectedFile,
     selectedAssetId,
     selectedInterval,
+    selectedInputFormat,
     selectedPolicy,
     preview,
     previewError,
@@ -1248,7 +1256,10 @@ router.post('/imports/run', (req, res, next) => {
     const importFile = importFileId ? getImportFile(getDatabase(req), importFileId) : null;
     const fileName = importFile ? importFile.filename : req.body.file;
     const assetId = req.body.assetId;
-    const interval = Array.from(SUPPORTED_INTERVALS).includes(req.body.interval) ? req.body.interval : '1d';
+    const inputFormat = Array.from(INPUT_FORMATS).includes(req.body.inputFormat) ? req.body.inputFormat : 'auto';
+    const interval = inputFormat === 'unix-ohlcv-60s'
+      ? '1m'
+      : (Array.from(SUPPORTED_INTERVALS).includes(req.body.interval) ? req.body.interval : '1d');
     const policy = Array.from(CONFLICT_POLICIES).includes(req.body.policy) ? req.body.policy : DEFAULT_CONFLICT_POLICY;
     const assets = getConfiguredAssets(req);
     const asset = assets.find((candidate) => candidate.id === assetId);
@@ -1271,7 +1282,8 @@ router.post('/imports/run', (req, res, next) => {
         assetId: asset.id,
         symbol: asset.symbol,
         vsCurrency: asset.vsCurrency,
-        interval
+        interval,
+        inputFormat
       });
       normalizedPath = buildConvertedPath(req, sourcePath, asset.id);
       fs.writeFileSync(normalizedPath, `${JSON.stringify({
@@ -1318,6 +1330,7 @@ router.post('/imports/run', (req, res, next) => {
       importFileId: registeredFile.id,
       assetId: asset.id,
       interval,
+      inputFormat,
       policy,
       result: {
         ...result,
@@ -1345,6 +1358,7 @@ router.post('/imports/run', (req, res, next) => {
       selectedFile: req.body.file,
       assetId: req.body.assetId,
       interval: req.body.interval,
+      inputFormat: req.body.inputFormat,
       policy: req.body.policy,
       error: error.message
     });

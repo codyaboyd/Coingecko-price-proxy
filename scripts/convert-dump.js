@@ -14,6 +14,7 @@ function printUsage() {
   console.log('  --symbol <symbol>         Optional symbol; defaults to --asset.');
   console.log('  --vs <currency>           Quote currency; defaults to usd.');
   console.log('  --interval <interval>     Candle interval; defaults to 1d.');
+  console.log('  --input-format <format>   auto or unix-ohlcv-60s; defaults to auto.');
   console.log('  --timestamp-unit <unit>   ms, s, or auto; defaults to auto.');
   console.log('  --timezone <timezone>     utc only; defaults to utc.');
   console.log('  --source <source>         Output source; defaults to import.');

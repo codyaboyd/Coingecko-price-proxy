@@ -2,6 +2,7 @@ const { INTERVAL_STEPS_MS, floorToUtcBoundary } = require('./cache-policy');
 const MINUTE_MS = 60 * 1000;
 const HOUR_MS = 60 * MINUTE_MS;
 const STALENESS_RULES = {
+  '1m': 10 * MINUTE_MS,
   '5m': 30 * MINUTE_MS,
   '1h': 3 * HOUR_MS,
   '1d': 36 * HOUR_MS
