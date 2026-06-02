@@ -1253,8 +1253,14 @@ router.post('/imports/run', (req, res, next) => {
   try {
     requireMaintenanceDisabled(req, 'Maintenance mode is active; imports are paused.');
     const importFileId = Number(req.body.importFileId || 0);
-    const importFile = importFileId ? getImportFile(getDatabase(req), importFileId) : null;
-    const fileName = importFile ? importFile.filename : req.body.file;
+    const requestedFileName = String(req.body.file || '').trim();
+    let importFile = importFileId ? getImportFile(getDatabase(req), importFileId) : null;
+
+    if (requestedFileName && (!importFile || importFile.filename !== requestedFileName)) {
+      importFile = syncImportInbox(req).find((candidate) => candidate.filename === requestedFileName) || null;
+    }
+
+    const fileName = importFile ? importFile.filename : requestedFileName;
     const assetId = req.body.assetId;
     const inputFormat = Array.from(INPUT_FORMATS).includes(req.body.inputFormat) ? req.body.inputFormat : 'auto';
     const interval = inputFormat === 'unix-ohlcv-60s'
