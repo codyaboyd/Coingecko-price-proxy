@@ -121,6 +121,18 @@ test('cleanup service prunes operational data without deleting candle history', 
   assert.equal(db.prepare("SELECT status FROM import_files WHERE id = ?").get(importFile.id).status, 'archived');
 });
 
+test('import page keeps the file selector synchronized with the selected import id', () => {
+  const view = fs.readFileSync(path.join(process.cwd(), 'views', 'admin-imports.ejs'), 'utf8');
+  const script = fs.readFileSync(path.join(process.cwd(), 'public', 'js', 'admin-imports.js'), 'utf8');
+
+  assert.match(view, /data-import-form/);
+  assert.match(view, /data-preview-on-change="true"/);
+  assert.match(view, /data-import-file-id="<%= file\.id %>"/);
+  assert.match(script, /syncSelectedImportFileId/);
+  assert.match(script, /window\.location\.assign/);
+});
+
+
 test('admin views share the complete admin navigation partial', () => {
   const adminViewDirectory = path.join(process.cwd(), 'views');
   const excludedViews = new Set([
