@@ -2,7 +2,7 @@ const { openDatabase } = require('../db/node-sqlite');
 const { loadServerConfig } = require('../utils/config');
 const { invalidateHistoryCacheForAsset } = require('./api-cache');
 
-const SUPPORTED_INTERVALS = new Set(['5m', '1h', '1d']);
+const SUPPORTED_INTERVALS = new Set(['1m', '5m', '1h', '1d']);
 const CONFLICT_POLICIES = new Set([
   'skip_existing',
   'overwrite_existing',

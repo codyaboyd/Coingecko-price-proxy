@@ -30,8 +30,8 @@ function printUsage() {
   console.log('  node scripts/cli.js backup');
   console.log('  node scripts/cli.js backups:list');
   console.log('  node scripts/cli.js backups:prune');
-  console.log('  node scripts/cli.js export-history --asset <id> [--from <date>] [--to <date>] [--interval <5m|1h|1d>] [--vs <currency>] [--format <csv|json>] [--output <path>]');
-  console.log('  node scripts/cli.js repair-gaps --asset <id> --from <date> --to <date> [--interval <5m|1h|1d>] [--vs <currency>]');
+  console.log('  node scripts/cli.js export-history --asset <id> [--from <date>] [--to <date>] [--interval <1m|5m|1h|1d>] [--vs <currency>] [--format <csv|json>] [--output <path>]');
+  console.log('  node scripts/cli.js repair-gaps --asset <id> --from <date> --to <date> [--interval <1m|5m|1h|1d>] [--vs <currency>]');
   console.log('  node scripts/cli.js queue-status');
   console.log('  node scripts/cli.js jobs:list');
   console.log('  node scripts/cli.js jobs:retry-failed');

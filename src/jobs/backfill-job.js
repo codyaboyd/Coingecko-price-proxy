@@ -8,6 +8,7 @@ const DEFAULT_CONFLICT_POLICY = 'fill_only_missing';
 const MAX_BACKFILL_RANGE_MS = 20 * 366 * DAY_MS;
 const MAX_BACKFILL_CHUNKS = 500;
 const DEFAULT_CHUNK_DAYS_BY_INTERVAL = {
+  '1m': 1,
   '5m': 1,
   '1h': 30,
   '1d': 90
