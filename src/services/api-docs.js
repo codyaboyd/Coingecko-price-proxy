@@ -101,6 +101,28 @@ function buildOpenApiDocument(options = {}) {
       buildCandleExample(asset, Date.UTC(2026, 0, 2))
     ]
   };
+  const coinGeckoChartExample = {
+    prices: [
+      [Date.UTC(2026, 0, 1), 42800],
+      [Date.UTC(2026, 0, 2), 43100]
+    ],
+    market_caps: [
+      [Date.UTC(2026, 0, 1), 850000000000],
+      [Date.UTC(2026, 0, 2), 855000000000]
+    ],
+    total_volumes: [
+      [Date.UTC(2026, 0, 1), 123.45],
+      [Date.UTC(2026, 0, 2), 234.56]
+    ]
+  };
+  const coinGeckoSimplePriceExample = {
+    [asset.coingeckoId || asset.id]: {
+      [asset.vsCurrency]: 43100,
+      [`${asset.vsCurrency}_market_cap`]: 855000000000,
+      [`${asset.vsCurrency}_24h_vol`]: 234.56,
+      last_updated_at: Math.floor(Date.UTC(2026, 0, 2) / 1000)
+    }
+  };
 
   return {
     openapi: '3.0.3',
@@ -192,6 +214,62 @@ function buildOpenApiDocument(options = {}) {
           summary: 'Generated OpenAPI-style JSON for the local API',
           responses: {
             200: jsonResponse('OpenAPI-style document.', { openapi: '3.0.3', info: { title: 'Chrono Cache Local API', version: 'v1' } })
+          }
+        }
+      },
+      '/api/v3/simple/price': {
+        get: {
+          tags: ['public'],
+          summary: 'CoinGecko-compatible current price replacement',
+          description: 'Drop-in local-cache response for CoinGecko GET /api/v3/simple/price.',
+          parameters: [
+            { name: 'ids', in: 'query', required: true, schema: { type: 'string' }, example: asset.coingeckoId || asset.id },
+            { name: 'vs_currencies', in: 'query', required: true, schema: { type: 'string' }, example: asset.vsCurrency },
+            { name: 'include_market_cap', in: 'query', required: false, schema: { type: 'boolean' } },
+            { name: 'include_24hr_vol', in: 'query', required: false, schema: { type: 'boolean' } },
+            { name: 'include_last_updated_at', in: 'query', required: false, schema: { type: 'boolean' } },
+            { name: 'precision', in: 'query', required: false, schema: { type: 'string' } }
+          ],
+          responses: {
+            200: jsonResponse('CoinGecko-compatible simple price map.', coinGeckoSimplePriceExample),
+            400: jsonResponse('CoinGecko-compatible error.', { error: 'ids is required' })
+          }
+        }
+      },
+      '/api/v3/coins/{id}/market_chart': {
+        get: {
+          tags: ['public'],
+          summary: 'CoinGecko-compatible market chart replacement',
+          description: 'Drop-in local-cache response for CoinGecko GET /api/v3/coins/{id}/market_chart.',
+          parameters: [
+            { name: 'id', in: 'path', required: true, schema: { type: 'string' }, example: asset.coingeckoId || asset.id },
+            { name: 'vs_currency', in: 'query', required: false, schema: { type: 'string', default: asset.vsCurrency } },
+            { name: 'days', in: 'query', required: true, schema: { type: 'string' }, example: 'max' },
+            { name: 'interval', in: 'query', required: false, schema: { type: 'string', enum: ['5m', 'hourly', 'daily'] } },
+            { name: 'precision', in: 'query', required: false, schema: { type: 'string' } }
+          ],
+          responses: {
+            200: jsonResponse('CoinGecko-compatible prices, market_caps, and total_volumes arrays.', coinGeckoChartExample),
+            404: jsonResponse('CoinGecko-compatible missing coin error.', { error: `Could not find coin with the given id ${asset.coingeckoId || asset.id}` })
+          }
+        }
+      },
+      '/api/v3/coins/{id}/market_chart/range': {
+        get: {
+          tags: ['public'],
+          summary: 'CoinGecko-compatible market chart range replacement',
+          description: 'Drop-in local-cache response for CoinGecko GET /api/v3/coins/{id}/market_chart/range.',
+          parameters: [
+            { name: 'id', in: 'path', required: true, schema: { type: 'string' }, example: asset.coingeckoId || asset.id },
+            { name: 'vs_currency', in: 'query', required: false, schema: { type: 'string', default: asset.vsCurrency } },
+            { name: 'from', in: 'query', required: true, schema: { type: 'string' }, description: 'UNIX seconds or ISO date/timestamp.' },
+            { name: 'to', in: 'query', required: true, schema: { type: 'string' }, description: 'UNIX seconds or ISO date/timestamp.' },
+            { name: 'interval', in: 'query', required: false, schema: { type: 'string', enum: ['5m', 'hourly', 'daily'] } },
+            { name: 'precision', in: 'query', required: false, schema: { type: 'string' } }
+          ],
+          responses: {
+            200: jsonResponse('CoinGecko-compatible prices, market_caps, and total_volumes arrays.', coinGeckoChartExample),
+            404: jsonResponse('CoinGecko-compatible missing coin error.', { error: `Could not find coin with the given id ${asset.coingeckoId || asset.id}` })
           }
         }
       },
@@ -306,6 +384,27 @@ function buildDocsModel(options = {}) {
         description: 'Returns cached local OHLCV candles. The endpoint never calls CoinGecko directly.',
         curl: `curl 'http://127.0.0.1:3000/api/v1/history/${encodeURIComponent(asset.id)}?interval=1d&vs=${encodeURIComponent(asset.vsCurrency)}&limit=5'`,
         response: docs.paths['/history/{assetId}'].get.responses[200].content['application/json'].example
+      },
+      {
+        method: 'GET',
+        path: '/api/v3/simple/price',
+        description: 'CoinGecko-compatible simple price endpoint backed by the latest local candles.',
+        curl: `curl 'http://127.0.0.1:3000/api/v3/simple/price?ids=${encodeURIComponent(asset.coingeckoId || asset.id)}&vs_currencies=${encodeURIComponent(asset.vsCurrency)}&include_market_cap=true&include_24hr_vol=true&include_last_updated_at=true'`,
+        response: docs.paths['/api/v3/simple/price'].get.responses[200].content['application/json'].example
+      },
+      {
+        method: 'GET',
+        path: '/api/v3/coins/:id/market_chart',
+        description: 'CoinGecko-compatible market_chart endpoint returning local prices, market caps, and volumes.',
+        curl: `curl 'http://127.0.0.1:3000/api/v3/coins/${encodeURIComponent(asset.coingeckoId || asset.id)}/market_chart?vs_currency=${encodeURIComponent(asset.vsCurrency)}&days=max&interval=daily'`,
+        response: docs.paths['/api/v3/coins/{id}/market_chart'].get.responses[200].content['application/json'].example
+      },
+      {
+        method: 'GET',
+        path: '/api/v3/coins/:id/market_chart/range',
+        description: 'CoinGecko-compatible market_chart/range endpoint accepting UNIX seconds or ISO dates.',
+        curl: `curl 'http://127.0.0.1:3000/api/v3/coins/${encodeURIComponent(asset.coingeckoId || asset.id)}/market_chart/range?vs_currency=${encodeURIComponent(asset.vsCurrency)}&from=2026-01-01&to=2026-01-31&interval=daily'`,
+        response: docs.paths['/api/v3/coins/{id}/market_chart/range'].get.responses[200].content['application/json'].example
       }
     ],
     adminEndpoints: [
