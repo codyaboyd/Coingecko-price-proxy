@@ -34,6 +34,7 @@ const { createPortableBundle } = require('../../scripts/create-portable-bundle')
 
 const router = express.Router();
 const MAX_IMPORT_FILE_BYTES = 50 * 1024 * 1024;
+const MAX_IMPORT_UPLOAD_BODY_BYTES = MAX_IMPORT_FILE_BYTES + 1024 * 1024;
 const MAX_ADMIN_FETCH_RANGE_MS = 366 * DAY_MS;
 const IMPORT_UPLOAD_FIELD = 'importUpload';
 
@@ -126,30 +127,44 @@ function buildUniqueImportUploadPath(importsDir, fileName) {
   return candidate;
 }
 
-function collectMultipartRequest(req, maxBytes = MAX_IMPORT_FILE_BYTES) {
+function collectMultipartRequest(req, maxBytes = MAX_IMPORT_UPLOAD_BODY_BYTES) {
   return new Promise((resolve, reject) => {
     const chunks = [];
     let totalBytes = 0;
+    let rejected = false;
 
     req.on('data', (chunk) => {
       totalBytes += chunk.length;
 
       if (totalBytes > maxBytes) {
-        const error = new Error('Import upload is too large for the admin inbox.');
-        error.status = 413;
-        req.destroy(error);
+        if (!rejected) {
+          rejected = true;
+          const error = new Error('Import upload is too large for the admin inbox.');
+          error.status = 413;
+          reject(error);
+        }
         return;
       }
 
-      chunks.push(chunk);
+      if (!rejected) {
+        chunks.push(chunk);
+      }
     });
 
-    req.on('end', () => resolve(Buffer.concat(chunks, totalBytes)));
+    req.on('end', () => {
+      if (!rejected) {
+        resolve(Buffer.concat(chunks, totalBytes));
+      }
+    });
     req.on('error', reject);
   });
 }
 
-function parseMultipartFileUpload(body, contentType, fieldName) {
+function isMultipartRequest(req) {
+  return String(req.headers['content-type'] || '').toLowerCase().includes('multipart/form-data');
+}
+
+function parseMultipartFormData(body, contentType) {
   const boundaryMatch = String(contentType || '').match(/(?:^|;)\s*boundary=([^;]+)/i);
 
   if (!boundaryMatch) {
@@ -160,6 +175,8 @@ function parseMultipartFileUpload(body, contentType, fieldName) {
 
   const boundaryValue = boundaryMatch[1].replace(/^"|"$/g, '');
   const boundary = Buffer.from(`--${boundaryValue}`);
+  const fields = {};
+  const files = {};
   let cursor = body.indexOf(boundary);
 
   while (cursor !== -1) {
@@ -193,14 +210,29 @@ function parseMultipartFileUpload(body, contentType, fieldName) {
       contentEnd -= 2;
     }
 
-    if (nameMatch && nameMatch[1] === fieldName && filenameMatch) {
-      return {
-        filename: filenameMatch[1],
-        content: body.slice(contentStart, contentEnd)
-      };
+    if (nameMatch) {
+      const name = nameMatch[1];
+      const content = body.slice(contentStart, contentEnd);
+
+      if (filenameMatch) {
+        files[name] = { filename: filenameMatch[1], content };
+      } else {
+        fields[name] = content.toString('utf8');
+      }
     }
 
     cursor = nextBoundary;
+  }
+
+  return { fields, files };
+}
+
+function parseMultipartFileUpload(body, contentType, fieldName) {
+  const { files } = parseMultipartFormData(body, contentType);
+  const upload = files[fieldName];
+
+  if (upload) {
+    return upload;
   }
 
   const error = new Error('Choose a CSV or JSON file before adding it to the inbox.');
@@ -208,13 +240,11 @@ function parseMultipartFileUpload(body, contentType, fieldName) {
   throw error;
 }
 
-async function saveImportUpload(req) {
+function saveImportUploadFile(req, upload) {
   const importsDir = getImportsDirectory(req);
   ensureImportInboxDirectories(req);
-  const body = await collectMultipartRequest(req);
-  const upload = parseMultipartFileUpload(body, req.headers['content-type'], IMPORT_UPLOAD_FIELD);
 
-  if (!upload.filename || upload.content.length === 0) {
+  if (!upload || !upload.filename || upload.content.length === 0) {
     const error = new Error('Choose a non-empty import file before adding it to the inbox.');
     error.status = 400;
     throw error;
@@ -231,6 +261,17 @@ async function saveImportUpload(req) {
   const safePath = assertInsideDirectory(importsDir, targetPath, 'Import upload cannot be saved outside data/imports.');
   const relativeName = path.relative(importsDir, safePath);
   return registerImportFile(getDatabase(req), safePath, { filename: relativeName });
+}
+
+async function parseMultipartImportRequest(req) {
+  const body = await collectMultipartRequest(req);
+  return parseMultipartFormData(body, req.headers['content-type']);
+}
+
+async function saveImportUpload(req) {
+  const body = await collectMultipartRequest(req);
+  const upload = parseMultipartFileUpload(body, req.headers['content-type'], IMPORT_UPLOAD_FIELD);
+  return saveImportUploadFile(req, upload);
 }
 
 function ensureImportInboxDirectories(req) {
@@ -1396,11 +1437,25 @@ router.post('/imports/upload', async (req, res, next) => {
   }
 });
 
-router.post('/imports/run', (req, res, next) => {
+router.post('/imports/run', async (req, res, next) => {
+  let importBody = req.body || {};
+
   try {
     requireMaintenanceDisabled(req, 'Maintenance mode is active; imports are paused.');
-    const importFileId = Number(req.body.importFileId || 0);
-    const requestedFileName = String(req.body.file || '').trim();
+
+    if (isMultipartRequest(req)) {
+      const multipart = await parseMultipartImportRequest(req);
+      importBody = multipart.fields;
+
+      if (multipart.files[IMPORT_UPLOAD_FIELD] && multipart.files[IMPORT_UPLOAD_FIELD].filename) {
+        const uploadedImportFile = saveImportUploadFile(req, multipart.files[IMPORT_UPLOAD_FIELD]);
+        importBody.importFileId = String(uploadedImportFile.id);
+        importBody.file = uploadedImportFile.filename;
+      }
+    }
+
+    const importFileId = Number(importBody.importFileId || 0);
+    const requestedFileName = String(importBody.file || '').trim();
     let importFile = importFileId ? getImportFile(getDatabase(req), importFileId) : null;
 
     if (requestedFileName && (!importFile || importFile.filename !== requestedFileName)) {
@@ -1408,12 +1463,12 @@ router.post('/imports/run', (req, res, next) => {
     }
 
     const fileName = importFile ? importFile.filename : requestedFileName;
-    const assetId = req.body.assetId;
-    const inputFormat = Array.from(INPUT_FORMATS).includes(req.body.inputFormat) ? req.body.inputFormat : 'auto';
+    const assetId = importBody.assetId;
+    const inputFormat = Array.from(INPUT_FORMATS).includes(importBody.inputFormat) ? importBody.inputFormat : 'auto';
     const interval = inputFormat === 'unix-ohlcv-60s'
       ? '1m'
-      : (Array.from(SUPPORTED_INTERVALS).includes(req.body.interval) ? req.body.interval : '1d');
-    const policy = Array.from(CONFLICT_POLICIES).includes(req.body.policy) ? req.body.policy : DEFAULT_CONFLICT_POLICY;
+      : (Array.from(SUPPORTED_INTERVALS).includes(importBody.interval) ? importBody.interval : '1d');
+    const policy = Array.from(CONFLICT_POLICIES).includes(importBody.policy) ? importBody.policy : DEFAULT_CONFLICT_POLICY;
     const assets = getConfiguredAssets(req);
     const asset = assets.find((candidate) => candidate.id === assetId);
 
@@ -1423,6 +1478,10 @@ router.post('/imports/run', (req, res, next) => {
 
     if (importFile && importFile.status === 'imported') {
       throw new Error('This file hash has already been imported. Archive it or choose a different file.');
+    }
+
+    if (!fileName) {
+      throw new Error('Choose a local file or an inbox file before importing.');
     }
 
     const sourcePath = resolveImportFile(req, fileName);
@@ -1493,7 +1552,7 @@ router.post('/imports/run', (req, res, next) => {
       }
     });
   } catch (error) {
-    const importFileId = Number(req.body.importFileId || 0);
+    const importFileId = Number(importBody.importFileId || 0);
     if (importFileId) {
       const failedFile = getImportFile(getDatabase(req), importFileId);
       if (failedFile && failedFile.status !== 'imported') {
@@ -1503,16 +1562,16 @@ router.post('/imports/run', (req, res, next) => {
     recordAdminEvent(req, {
       action: 'import run',
       entityType: 'import',
-      entityId: req.body.assetId || req.body.file || null,
-      details: { status: 'failed', assetId: req.body.assetId, fileName: req.body.file, error: error.message }
+      entityId: importBody.assetId || importBody.file || null,
+      details: { status: 'failed', assetId: importBody.assetId, fileName: importBody.file, error: error.message }
     });
     renderImportsPage(req, res, {
       importFileId,
-      selectedFile: req.body.file,
-      assetId: req.body.assetId,
-      interval: req.body.interval,
-      inputFormat: req.body.inputFormat,
-      policy: req.body.policy,
+      selectedFile: importBody.file,
+      assetId: importBody.assetId,
+      interval: importBody.interval,
+      inputFormat: importBody.inputFormat,
+      policy: importBody.policy,
       error: error.message
     });
   }

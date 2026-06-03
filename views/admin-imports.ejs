@@ -48,28 +48,6 @@
 
       <div class="card shadow-sm mb-4">
         <div class="card-header bg-white">
-          <h2 class="h5 mb-0">Add file to import inbox</h2>
-        </div>
-        <div class="card-body">
-          <form method="post" action="/admin/imports/upload" enctype="multipart/form-data" class="row g-3 align-items-end" data-import-upload-form>
-            <div class="col-12 col-lg-8">
-              <label class="form-label" for="importUploadName">Local import file</label>
-              <input class="visually-hidden" type="file" id="importUpload" name="importUpload" accept=".csv,.json,application/json,text/csv" data-import-upload-input>
-              <div class="input-group import-file-picker">
-                <button class="btn btn-outline-secondary" type="button" data-import-upload-button>Choose file</button>
-                <input class="form-control" id="importUploadName" type="text" value="" placeholder="No file selected" readonly data-import-upload-name>
-              </div>
-              <div class="form-text">The selected file is copied into <code>data/imports</code> so it can be previewed, converted, and imported.</div>
-            </div>
-            <div class="col-12 col-lg-4">
-              <button class="btn btn-primary w-100" type="submit" disabled data-import-upload-submit data-import-upload-maintenance="<%= maintenanceMode ? 'true' : 'false' %>">Add to inbox</button>
-            </div>
-          </form>
-        </div>
-      </div>
-
-      <div class="card shadow-sm mb-4">
-        <div class="card-header bg-white">
           <h2 class="h5 mb-0">Solo-developer import workflow</h2>
         </div>
         <div class="card-body">
@@ -182,11 +160,22 @@
               <h2 class="h5 mb-0">Map, convert, validate, import</h2>
             </div>
             <div class="card-body">
-              <form method="post" action="/admin/imports/run" class="row g-3" data-import-form>
+              <form method="post" action="/admin/imports/run" enctype="multipart/form-data" class="row g-3" data-import-form data-import-upload-form>
                 <input type="hidden" name="importFileId" value="<%= selectedImportFile ? selectedImportFile.id : '' %>">
                 <div class="col-12">
-                  <label class="form-label" for="file">Import file</label>
-                  <select class="form-select" id="file" name="file" required data-preview-on-change="true">
+                  <label class="form-label" for="importUploadName">Local import file</label>
+                  <input class="visually-hidden" type="file" id="importUpload" name="importUpload" accept=".csv,.json,application/json,text/csv" data-import-upload-input>
+                  <div class="input-group import-file-picker">
+                    <button class="btn btn-outline-secondary" type="button" data-import-upload-button>Choose file</button>
+                    <input class="form-control" id="importUploadName" type="text" value="" placeholder="No file selected" readonly data-import-upload-name>
+                    <button class="btn btn-outline-primary" type="submit" formaction="/admin/imports/upload" formmethod="post" formenctype="multipart/form-data" formnovalidate disabled data-import-upload-submit data-import-upload-maintenance="<%= maintenanceMode ? 'true' : 'false' %>">Add to inbox</button>
+                  </div>
+                  <div class="form-text">Choose a new CSV or JSON file here, or select an existing inbox file below. New files are copied into <code>data/imports</code> before previewing or importing.</div>
+                </div>
+                <div class="col-12">
+                  <label class="form-label" for="file">Inbox file</label>
+                  <select class="form-select" id="file" name="file" data-preview-on-change="true">
+                    <option value="" data-import-file-id="">Select an inbox file<%= files.length === 0 ? ' (none available)' : '' %></option>
                     <% files.forEach((file) => { %>
                       <option value="<%= file.filename %>" data-import-file-id="<%= file.id %>" <%= selectedImportFile && file.id === selectedImportFile.id ? 'selected' : '' %>><%= file.filename %> (<%= file.status %>)</option>
                     <% }) %>
@@ -228,7 +217,7 @@
                   <div class="form-text">Column mapping is auto-detected from common timestamp, OHLC, volume, and market-cap headers. Choose Unix OHLCV 60s for <code>Timestamp, Open, High, Low, Close, Volume</code> CSV files whose timestamps are Unix seconds and whose windows are 60 seconds; this imports them as <code>1m</code> candles.</div>
                 </div>
                 <div class="col-12 d-flex flex-wrap gap-2">
-                  <button type="submit" class="btn btn-primary" <%= (files.length === 0 || maintenanceMode || (selectedImportFile && selectedImportFile.status === 'imported')) ? 'disabled' : '' %>>Convert, validate, and import</button>
+                  <button type="submit" class="btn btn-primary" data-import-run-submit data-import-run-maintenance="<%= maintenanceMode ? 'true' : 'false' %>" data-selected-import-imported="<%= selectedImportFile && selectedImportFile.status === 'imported' ? 'true' : 'false' %>" <%= (files.length === 0 || maintenanceMode || (selectedImportFile && selectedImportFile.status === 'imported')) ? 'disabled' : '' %>>Convert, validate, and import</button>
                   <% if (selectedImportFile) { %>
                     <a class="btn btn-outline-secondary" href="/admin/imports?importFileId=<%= selectedImportFile.id %>&asset=<%= encodeURIComponent(selectedAssetId) %>&interval=<%= encodeURIComponent(selectedInterval) %>&inputFormat=<%= encodeURIComponent(selectedInputFormat) %>&policy=<%= encodeURIComponent(selectedPolicy) %>">Preview / refresh</a>
                   <% } %>
