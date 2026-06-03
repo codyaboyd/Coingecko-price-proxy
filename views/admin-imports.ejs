@@ -237,13 +237,16 @@
             <div class="card-header bg-white d-flex justify-content-between align-items-center flex-wrap gap-2">
               <h2 class="h5 mb-0">Preview and validation</h2>
               <% if (preview) { %>
-                <span class="badge text-bg-secondary"><%= preview.rowsSeen %> row(s), <%= preview.detectedFormat %></span>
+                <span class="badge text-bg-secondary"><%= preview.rowsSeen === null || preview.rowsSeen === undefined ? 'Preview skipped' : `${preview.rowsSeen} row(s)` %>, <%= preview.detectedFormat %></span>
               <% } %>
             </div>
             <div class="card-body">
               <% if (!preview) { %>
                 <p class="text-secondary mb-0">Choose an inbox file to preview import rows.</p>
               <% } else { %>
+                <% if (preview.previewMessage) { %>
+                  <div class="alert alert-info" role="alert"><%= preview.previewMessage %></div>
+                <% } %>
                 <dl class="row small mb-3">
                   <dt class="col-sm-3">State</dt><dd class="col-sm-9"><span class="badge text-bg-secondary"><%= selectedImportFile ? selectedImportFile.status : 'previewed' %></span></dd>
                   <dt class="col-sm-3">Asset</dt><dd class="col-sm-9"><code><%= preview.assetId || selectedAssetId %></code></dd>
