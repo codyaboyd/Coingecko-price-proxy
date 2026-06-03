@@ -1,7 +1,6 @@
 const express = require('express');
 const fs = require('fs');
 const path = require('path');
-const Busboy = require('busboy');
 
 const { getAssetCandleBounds, getConfigChange, getNextConfigChangeForFile, getPublicAsset, listConfigChanges, listFetchRunsForAsset, upsertAssets } = require('../db/queries');
 const { readAssetConfig, loadAssets } = require('../services/asset-service');
@@ -264,120 +263,32 @@ function saveImportUploadFile(req, upload) {
   return registerImportFile(getDatabase(req), safePath, { filename: relativeName });
 }
 
-function saveImportUploadStream(req, options = {}) {
+async function saveImportUploadStream(req, options = {}) {
   const fieldName = options.fieldName || IMPORT_UPLOAD_FIELD;
   const allowMissingFile = options.allowMissingFile === true;
-  return new Promise((resolve, reject) => {
-    ensureImportInboxDirectories(req);
 
-    if (!isMultipartRequest(req)) {
-      const error = new Error('File upload must use multipart/form-data.');
-      error.status = 400;
-      reject(error);
-      return;
+  if (!isMultipartRequest(req)) {
+    const error = new Error('File upload must use multipart/form-data.');
+    error.status = 400;
+    throw error;
+  }
+
+  const body = await collectMultipartRequest(req);
+  const { fields, files } = parseMultipartFormData(body, req.headers['content-type']);
+  const upload = files[fieldName];
+
+  if (!upload) {
+    if (allowMissingFile) {
+      return { fields, importFile: null };
     }
 
-    const importsDir = getImportsDirectory(req);
-    const fields = {};
-    let uploadInfo = null;
-    let uploadPath = null;
-    let uploadBytes = 0;
-    let settled = false;
-    let busboyFinished = false;
-    let writeFinished = false;
-    const busboy = Busboy({
-      headers: req.headers,
-      limits: {
-        fileSize: MAX_IMPORT_FILE_BYTES,
-        files: 1,
-        fields: 25
-      }
-    });
+    const error = new Error('Choose a CSV or JSON file before adding it to the inbox.');
+    error.status = 400;
+    throw error;
+  }
 
-    const fail = (error) => {
-      if (settled) {
-        return;
-      }
-
-      settled = true;
-      if (uploadPath) {
-        fs.rm(uploadPath, { force: true }, () => {});
-      }
-      reject(error);
-    };
-
-    const finish = () => {
-      if (settled || !busboyFinished || (uploadInfo && !writeFinished)) {
-        return;
-      }
-
-      if (!uploadInfo) {
-        if (allowMissingFile) {
-          settled = true;
-          resolve({ fields, importFile: null });
-          return;
-        }
-
-        const error = new Error('Choose a CSV or JSON file before adding it to the inbox.');
-        error.status = 400;
-        fail(error);
-        return;
-      }
-
-      if (uploadBytes === 0) {
-        const error = new Error('Choose a non-empty import file before adding it to the inbox.');
-        error.status = 400;
-        fail(error);
-        return;
-      }
-
-      settled = true;
-      const safePath = assertInsideDirectory(importsDir, uploadInfo.path, 'Import upload cannot be saved outside data/imports.');
-      const importFile = registerImportFile(getDatabase(req), safePath, { filename: path.relative(importsDir, safePath) });
-      resolve({ fields, importFile });
-    };
-
-    busboy.on('field', (name, value) => {
-      fields[name] = value;
-    });
-
-    busboy.on('file', (name, file, info) => {
-      const filename = sanitizeUploadFileName(info.filename || '');
-
-      if (name !== fieldName || !filename) {
-        file.resume();
-        return;
-      }
-
-      uploadPath = buildUniqueImportUploadPath(importsDir, filename);
-      const output = fs.createWriteStream(uploadPath, { flags: 'wx' });
-      uploadInfo = { filename: path.basename(uploadPath), path: uploadPath };
-
-      file.on('data', (chunk) => {
-        uploadBytes += chunk.length;
-      });
-      file.on('limit', () => {
-        const error = new Error(`Import upload is too large for the admin inbox. Maximum size is ${Math.floor(MAX_IMPORT_FILE_BYTES / 1024 / 1024)} MiB.`);
-        error.status = 413;
-        fail(error);
-      });
-      file.on('error', fail);
-      output.on('error', fail);
-      output.on('finish', () => {
-        writeFinished = true;
-        finish();
-      });
-      file.pipe(output);
-    });
-
-    busboy.on('error', fail);
-    busboy.on('finish', () => {
-      busboyFinished = true;
-      finish();
-    });
-
-    req.pipe(busboy);
-  });
+  const importFile = saveImportUploadFile(req, upload);
+  return { fields, importFile };
 }
 
 async function parseMultipartImportRequest(req) {
