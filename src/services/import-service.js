@@ -1,14 +1,30 @@
 const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
+const readline = require('readline');
 
 
 const IMPORT_FILE_STATUSES = new Set(['pending', 'previewed', 'converted', 'imported', 'failed', 'archived']);
 
 function hashFile(filePath) {
   const hash = crypto.createHash('sha256');
-  const data = fs.readFileSync(filePath);
-  hash.update(data);
+  const fd = fs.openSync(filePath, 'r');
+  const buffer = Buffer.allocUnsafe(1024 * 1024);
+
+  try {
+    let bytesRead = 0;
+
+    do {
+      bytesRead = fs.readSync(fd, buffer, 0, buffer.length, null);
+
+      if (bytesRead > 0) {
+        hash.update(buffer.subarray(0, bytesRead));
+      }
+    } while (bytesRead > 0);
+  } finally {
+    fs.closeSync(fd);
+  }
+
   return hash.digest('hex');
 }
 
@@ -704,6 +720,148 @@ function convertDumpFile(inputPath, options = {}) {
   return convertDumpText(text, inputPath, options);
 }
 
+
+function parseCsvLine(line) {
+  const rows = parseCsv(`${line}\n`);
+  return rows[0] || [];
+}
+
+async function importCsvDumpFile(inputPath, options = {}) {
+  const { insertCandles } = require('./history-service');
+  const normalizedOptions = normalizeOptions(options);
+  const db = options.db;
+
+  if (!inputPath) {
+    throw new Error('An input CSV path is required.');
+  }
+
+  if (!db) {
+    throw new Error('importCsvDumpFile requires a database connection.');
+  }
+
+  const policy = normalizeImportPolicy(options.policy || options.conflictPolicy || options.conflict_policy);
+  const filename = path.basename(inputPath);
+  const detectedFormat = normalizedOptions.inputFormat === 'unix-ohlcv-60s' ? 'csv:unix-ohlcv-60s' : 'csv:columns';
+  const createdAt = Date.now();
+  const batchSize = Number.isInteger(options.batchSize) && options.batchSize > 0 ? options.batchSize : 5000;
+  const stream = fs.createReadStream(inputPath, { encoding: 'utf8' });
+  const reader = readline.createInterface({ input: stream, crlfDelay: Infinity });
+  let columns = null;
+  let rowsSeen = 0;
+  let rowsSkipped = 0;
+  let rowsImported = 0;
+  let batch = [];
+
+  const flushBatch = () => {
+    if (batch.length === 0) {
+      return;
+    }
+
+    const result = insertCandles(batch, {
+      db,
+      assetId: normalizedOptions.assetId,
+      vsCurrency: normalizedOptions.vsCurrency,
+      interval: normalizedOptions.interval,
+      conflictPolicy: policy,
+      fetchedAt: createdAt
+    });
+    rowsImported += result.changed;
+    batch = [];
+  };
+
+  try {
+    for await (const line of reader) {
+      if (!line || line.trim() === '') {
+        continue;
+      }
+
+      const row = parseCsvLine(line);
+
+      if (!columns) {
+        columns = detectColumns(row);
+
+        if (columns.timestamp === undefined || columns.close === undefined) {
+          throw new Error('CSV input must contain timestamp/date/time and close/price columns.');
+        }
+
+        continue;
+      }
+
+      rowsSeen += 1;
+      const candle = createCandleFromValues({
+        timestamp: row[columns.timestamp],
+        open: row[columns.open],
+        high: row[columns.high],
+        low: row[columns.low],
+        close: row[columns.close],
+        volume: row[columns.volume],
+        marketCap: row[columns.marketCap]
+      }, normalizedOptions);
+
+      if (candle) {
+        batch.push({
+          ...candle,
+          assetId: normalizedOptions.assetId,
+          vsCurrency: normalizedOptions.vsCurrency,
+          interval: normalizedOptions.interval
+        });
+      } else {
+        rowsSkipped += 1;
+      }
+
+      if (batch.length >= batchSize) {
+        flushBatch();
+      }
+    }
+
+    if (!columns) {
+      throw new Error('CSV input must contain a header row.');
+    }
+
+    flushBatch();
+    const runId = recordImportRun(db, {
+      filename,
+      assetId: normalizedOptions.assetId,
+      vsCurrency: normalizedOptions.vsCurrency,
+      detectedFormat,
+      status: 'success',
+      rowsSeen,
+      rowsImported,
+      createdAt
+    });
+
+    return {
+      runId,
+      filename,
+      assetId: normalizedOptions.assetId,
+      vsCurrency: normalizedOptions.vsCurrency,
+      interval: normalizedOptions.interval,
+      detectedFormat,
+      status: 'success',
+      rowsSeen,
+      rowsImported,
+      rowsSkipped,
+      policy,
+      streamed: true
+    };
+  } catch (error) {
+    const runId = recordImportRun(db, {
+      filename,
+      assetId: normalizedOptions.assetId,
+      vsCurrency: normalizedOptions.vsCurrency,
+      detectedFormat,
+      status: 'error',
+      rowsSeen,
+      rowsImported,
+      error: error.message,
+      createdAt
+    });
+
+    error.importRunId = runId;
+    throw error;
+  }
+}
+
 const IMPORT_RUN_COLUMNS = [
   'filename',
   'asset_id',
@@ -872,6 +1030,7 @@ module.exports = {
   INPUT_FORMATS,
   convertDumpFile,
   convertDumpText,
+  importCsvDumpFile,
   getImportFile,
   hashFile,
   importNormalizedHistoryFile,

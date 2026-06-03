@@ -1,11 +1,12 @@
 const express = require('express');
 const fs = require('fs');
 const path = require('path');
+const Busboy = require('busboy');
 
 const { getAssetCandleBounds, getConfigChange, getNextConfigChangeForFile, getPublicAsset, listConfigChanges, listFetchRunsForAsset, upsertAssets } = require('../db/queries');
 const { readAssetConfig, loadAssets } = require('../services/asset-service');
 const { CONFLICT_POLICIES, DEFAULT_CONFLICT_POLICY, SUPPORTED_INTERVALS, countCandles } = require('../services/history-service');
-const { INPUT_FORMATS, convertDumpFile, getImportFile, importNormalizedHistoryFile, listImportFiles, previewNormalizedHistoryFile, registerImportFile, updateImportFile } = require('../services/import-service');
+const { INPUT_FORMATS, convertDumpFile, getImportFile, importCsvDumpFile, importNormalizedHistoryFile, listImportFiles, previewNormalizedHistoryFile, registerImportFile, updateImportFile } = require('../services/import-service');
 const { ensureDirectory, resolveFromRoot } = require('../utils/files');
 const { enqueueBackfill } = require('../jobs/backfill-job');
 const { createScheduler } = require('../jobs/scheduler');
@@ -33,8 +34,8 @@ const logger = require('../utils/logger');
 const { createPortableBundle } = require('../../scripts/create-portable-bundle');
 
 const router = express.Router();
-const MAX_IMPORT_FILE_BYTES = 50 * 1024 * 1024;
-const MAX_IMPORT_UPLOAD_BODY_BYTES = MAX_IMPORT_FILE_BYTES + 1024 * 1024;
+const MAX_IMPORT_FILE_BYTES = 512 * 1024 * 1024;
+const MAX_IMPORT_PREVIEW_BYTES = 25 * 1024 * 1024;
 const MAX_ADMIN_FETCH_RANGE_MS = 366 * DAY_MS;
 const IMPORT_UPLOAD_FIELD = 'importUpload';
 
@@ -127,7 +128,7 @@ function buildUniqueImportUploadPath(importsDir, fileName) {
   return candidate;
 }
 
-function collectMultipartRequest(req, maxBytes = MAX_IMPORT_UPLOAD_BODY_BYTES) {
+function collectMultipartRequest(req, maxBytes = MAX_IMPORT_FILE_BYTES + 1024 * 1024) {
   return new Promise((resolve, reject) => {
     const chunks = [];
     let totalBytes = 0;
@@ -263,6 +264,122 @@ function saveImportUploadFile(req, upload) {
   return registerImportFile(getDatabase(req), safePath, { filename: relativeName });
 }
 
+function saveImportUploadStream(req, options = {}) {
+  const fieldName = options.fieldName || IMPORT_UPLOAD_FIELD;
+  const allowMissingFile = options.allowMissingFile === true;
+  return new Promise((resolve, reject) => {
+    ensureImportInboxDirectories(req);
+
+    if (!isMultipartRequest(req)) {
+      const error = new Error('File upload must use multipart/form-data.');
+      error.status = 400;
+      reject(error);
+      return;
+    }
+
+    const importsDir = getImportsDirectory(req);
+    const fields = {};
+    let uploadInfo = null;
+    let uploadPath = null;
+    let uploadBytes = 0;
+    let settled = false;
+    let busboyFinished = false;
+    let writeFinished = false;
+    const busboy = Busboy({
+      headers: req.headers,
+      limits: {
+        fileSize: MAX_IMPORT_FILE_BYTES,
+        files: 1,
+        fields: 25
+      }
+    });
+
+    const fail = (error) => {
+      if (settled) {
+        return;
+      }
+
+      settled = true;
+      if (uploadPath) {
+        fs.rm(uploadPath, { force: true }, () => {});
+      }
+      reject(error);
+    };
+
+    const finish = () => {
+      if (settled || !busboyFinished || (uploadInfo && !writeFinished)) {
+        return;
+      }
+
+      if (!uploadInfo) {
+        if (allowMissingFile) {
+          settled = true;
+          resolve({ fields, importFile: null });
+          return;
+        }
+
+        const error = new Error('Choose a CSV or JSON file before adding it to the inbox.');
+        error.status = 400;
+        fail(error);
+        return;
+      }
+
+      if (uploadBytes === 0) {
+        const error = new Error('Choose a non-empty import file before adding it to the inbox.');
+        error.status = 400;
+        fail(error);
+        return;
+      }
+
+      settled = true;
+      const safePath = assertInsideDirectory(importsDir, uploadInfo.path, 'Import upload cannot be saved outside data/imports.');
+      const importFile = registerImportFile(getDatabase(req), safePath, { filename: path.relative(importsDir, safePath) });
+      resolve({ fields, importFile });
+    };
+
+    busboy.on('field', (name, value) => {
+      fields[name] = value;
+    });
+
+    busboy.on('file', (name, file, info) => {
+      const filename = sanitizeUploadFileName(info.filename || '');
+
+      if (name !== fieldName || !filename) {
+        file.resume();
+        return;
+      }
+
+      uploadPath = buildUniqueImportUploadPath(importsDir, filename);
+      const output = fs.createWriteStream(uploadPath, { flags: 'wx' });
+      uploadInfo = { filename: path.basename(uploadPath), path: uploadPath };
+
+      file.on('data', (chunk) => {
+        uploadBytes += chunk.length;
+      });
+      file.on('limit', () => {
+        const error = new Error(`Import upload is too large for the admin inbox. Maximum size is ${Math.floor(MAX_IMPORT_FILE_BYTES / 1024 / 1024)} MiB.`);
+        error.status = 413;
+        fail(error);
+      });
+      file.on('error', fail);
+      output.on('error', fail);
+      output.on('finish', () => {
+        writeFinished = true;
+        finish();
+      });
+      file.pipe(output);
+    });
+
+    busboy.on('error', fail);
+    busboy.on('finish', () => {
+      busboyFinished = true;
+      finish();
+    });
+
+    req.pipe(busboy);
+  });
+}
+
 async function parseMultipartImportRequest(req) {
   const body = await collectMultipartRequest(req);
   return parseMultipartFormData(body, req.headers['content-type']);
@@ -395,7 +512,7 @@ function resolveImportFile(req, fileName) {
   }
 
   if (stats.size > MAX_IMPORT_FILE_BYTES) {
-    const error = new Error('Import file is too large for admin preview/import.');
+    const error = new Error(`Import file is too large for admin import. Maximum size is ${Math.floor(MAX_IMPORT_FILE_BYTES / 1024 / 1024)} MiB.`);
     error.status = 400;
     throw error;
   }
@@ -424,6 +541,20 @@ function previewImportFile(filePath, options) {
 
   if (looksLikeNormalizedFile(filePath)) {
     return previewNormalizedHistoryFile(filePath, 25);
+  }
+
+  const stats = fs.statSync(filePath);
+
+  if (stats.size > MAX_IMPORT_PREVIEW_BYTES) {
+    return {
+      detectedFormat: 'preview-skipped:large-file',
+      rowsSeen: null,
+      rowsConverted: null,
+      rowsSkipped: null,
+      candles: [],
+      previewSkipped: true,
+      previewMessage: `Automatic preview is skipped for files larger than ${Math.floor(MAX_IMPORT_PREVIEW_BYTES / 1024 / 1024)} MiB. You can still run the import.`
+    };
   }
 
   const conversion = convertDumpFile(filePath, options);
@@ -1422,7 +1553,7 @@ router.get('/imports', (req, res, next) => {
 router.post('/imports/upload', async (req, res, next) => {
   try {
     requireMaintenanceDisabled(req, 'Maintenance mode is active; imports are paused.');
-    const importFile = await saveImportUpload(req);
+    const { importFile } = await saveImportUploadStream(req);
 
     recordAdminEvent(req, {
       action: 'import upload',
@@ -1444,13 +1575,12 @@ router.post('/imports/run', async (req, res, next) => {
     requireMaintenanceDisabled(req, 'Maintenance mode is active; imports are paused.');
 
     if (isMultipartRequest(req)) {
-      const multipart = await parseMultipartImportRequest(req);
+      const multipart = await saveImportUploadStream(req, { allowMissingFile: true });
       importBody = multipart.fields;
 
-      if (multipart.files[IMPORT_UPLOAD_FIELD] && multipart.files[IMPORT_UPLOAD_FIELD].filename) {
-        const uploadedImportFile = saveImportUploadFile(req, multipart.files[IMPORT_UPLOAD_FIELD]);
-        importBody.importFileId = String(uploadedImportFile.id);
-        importBody.file = uploadedImportFile.filename;
+      if (multipart.importFile) {
+        importBody.importFileId = String(multipart.importFile.id);
+        importBody.file = multipart.importFile.filename;
       }
     }
 
@@ -1489,37 +1619,58 @@ router.post('/imports/run', async (req, res, next) => {
     let normalizedPath = sourcePath;
     let conversionReport = null;
 
-    if (!looksLikeNormalizedFile(sourcePath)) {
-      const conversion = convertDumpFile(sourcePath, {
+    let result = null;
+
+    if (!looksLikeNormalizedFile(sourcePath) && path.extname(sourcePath).toLowerCase() !== '.json') {
+      result = await importCsvDumpFile(sourcePath, {
+        db: getDatabase(req),
+        policy,
         assetId: asset.id,
         symbol: asset.symbol,
         vsCurrency: asset.vsCurrency,
         interval,
         inputFormat
       });
-      normalizedPath = buildConvertedPath(req, sourcePath, asset.id);
-      fs.writeFileSync(normalizedPath, `${JSON.stringify({
-        ...conversion.output,
-        detectedFormat: conversion.report.detectedFormat
-      }, null, 2)}\n`);
-      conversionReport = conversion.report;
-      updateImportFile(getDatabase(req), registeredFile.id, {
-        status: 'converted',
-        detectedFormat: conversion.report.detectedFormat,
+      conversionReport = {
+        rowsSeen: result.rowsSeen,
+        rowsConverted: result.rowsSeen - (result.rowsSkipped || 0),
+        rowsSkipped: result.rowsSkipped || 0,
+        detectedFormat: result.detectedFormat,
+        streamed: true
+      };
+    } else {
+      if (!looksLikeNormalizedFile(sourcePath)) {
+        const conversion = convertDumpFile(sourcePath, {
+          assetId: asset.id,
+          symbol: asset.symbol,
+          vsCurrency: asset.vsCurrency,
+          interval,
+          inputFormat
+        });
+        normalizedPath = buildConvertedPath(req, sourcePath, asset.id);
+        fs.writeFileSync(normalizedPath, `${JSON.stringify({
+          ...conversion.output,
+          detectedFormat: conversion.report.detectedFormat
+        }, null, 2)}\n`);
+        conversionReport = conversion.report;
+        updateImportFile(getDatabase(req), registeredFile.id, {
+          status: 'converted',
+          detectedFormat: conversion.report.detectedFormat,
+          assetId: asset.id,
+          interval,
+          rowsSeen: conversion.report.rowsSeen,
+          lastError: null
+        });
+      }
+
+      result = importNormalizedHistoryFile(normalizedPath, {
+        db: getDatabase(req),
+        policy,
         assetId: asset.id,
-        interval,
-        rowsSeen: conversion.report.rowsSeen,
-        lastError: null
+        vsCurrency: asset.vsCurrency,
+        interval
       });
     }
-
-    const result = importNormalizedHistoryFile(normalizedPath, {
-      db: getDatabase(req),
-      policy,
-      assetId: asset.id,
-      vsCurrency: asset.vsCurrency,
-      interval
-    });
 
     updateImportFile(getDatabase(req), registeredFile.id, {
       status: 'imported',
@@ -1534,8 +1685,8 @@ router.post('/imports/run', async (req, res, next) => {
     recordAdminEvent(req, {
       action: 'import run',
       entityType: 'import',
-      entityId: result.importRunId || asset.id,
-      details: { status: result.status || 'completed', assetId: asset.id, fileName, normalizedPath: path.relative(process.cwd(), normalizedPath), rowsImported: result.rowsImported, policy }
+      entityId: result.importRunId || result.runId || asset.id,
+      details: { status: result.status || 'completed', assetId: asset.id, fileName, normalizedPath: normalizedPath === sourcePath ? null : path.relative(process.cwd(), normalizedPath), rowsImported: result.rowsImported, policy }
     });
 
     renderImportsPage(req, res, {
@@ -1546,7 +1697,7 @@ router.post('/imports/run', async (req, res, next) => {
       policy,
       result: {
         ...result,
-        normalizedFile: path.relative(process.cwd(), normalizedPath),
+        normalizedFile: normalizedPath === sourcePath ? null : path.relative(process.cwd(), normalizedPath),
         rawFile: path.relative(process.cwd(), sourcePath),
         conversionReport
       }

@@ -627,6 +627,39 @@ test('converter supports native Unix OHLCV 60s CSV format', (t) => {
   assert.equal(output.candles[1].close, 42350.75);
 });
 
+
+test('streaming CSV import handles inbox-sized datasets without building normalized JSON', async (t) => {
+  const db = seedDatabase(t);
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'chrono-cache-stream-import-'));
+  const importPath = path.join(tempDir, 'btc-stream.csv');
+
+  t.after(() => fs.rmSync(tempDir, { recursive: true, force: true }));
+
+  fs.writeFileSync(importPath, [
+    'Timestamp,Open,High,Low,Close,Volume',
+    '1704067200,42280.12,42300.50,42190.00,42295.25,12.345',
+    '1704067260,42295.25,42410.00,42280.00,42350.75,8.5',
+    'not-a-date,1,1,1,1,1'
+  ].join('\n'));
+
+  const { importCsvDumpFile } = require('../src/services/import-service');
+  const result = await importCsvDumpFile(importPath, {
+    db,
+    assetId: 'btc',
+    vsCurrency: 'usd',
+    inputFormat: 'unix-ohlcv-60s',
+    policy: 'overwrite_existing',
+    batchSize: 1
+  });
+
+  assert.equal(result.detectedFormat, 'csv:unix-ohlcv-60s');
+  assert.equal(result.streamed, true);
+  assert.equal(result.rowsSeen, 3);
+  assert.equal(result.rowsSkipped, 1);
+  assert.equal(result.rowsImported, 2);
+  assert.equal(db.prepare("SELECT COUNT(*) AS count FROM candles WHERE asset_id = 'btc' AND interval = '1m'").get().count, 2);
+});
+
 test('import inbox registers file hashes once and tracks states', (t) => {
   const db = seedDatabase(t);
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'chrono-cache-import-inbox-'));
