@@ -222,6 +222,12 @@
                     <a class="btn btn-outline-secondary" href="/admin/imports?importFileId=<%= selectedImportFile.id %>&asset=<%= encodeURIComponent(selectedAssetId) %>&interval=<%= encodeURIComponent(selectedInterval) %>&inputFormat=<%= encodeURIComponent(selectedInputFormat) %>&policy=<%= encodeURIComponent(selectedPolicy) %>">Preview / refresh</a>
                   <% } %>
                 </div>
+                <div class="col-12">
+                  <div class="alert alert-info d-none mb-0" role="status" aria-live="polite" data-import-submit-status>
+                    <span class="spinner-border spinner-border-sm me-2" aria-hidden="true"></span>
+                    <span data-import-submit-status-text>Preparing import…</span>
+                  </div>
+                </div>
               </form>
               <% if (selectedImportFile) { %>
                 <form method="post" action="/admin/imports/archive" class="mt-3">

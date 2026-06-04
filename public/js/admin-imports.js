@@ -7,6 +7,10 @@
     const fileNameInput = uploadForm.querySelector('[data-import-upload-name]');
     const uploadSubmitButton = uploadForm.querySelector('[data-import-upload-submit]');
     const runSubmitButton = uploadForm.querySelector('[data-import-run-submit]');
+    const submitStatus = uploadForm.querySelector('[data-import-submit-status]');
+    const submitStatusText = uploadForm.querySelector('[data-import-submit-status-text]');
+    const submitButtons = Array.from(uploadForm.querySelectorAll('button[type="submit"]'));
+    let isSubmitting = false;
 
     const syncUploadControls = () => {
       const selectedFile = fileInput && fileInput.files && fileInput.files.length > 0 ? fileInput.files[0] : null;
@@ -16,6 +20,10 @@
 
       if (fileNameInput) {
         fileNameInput.value = selectedFile ? selectedFile.name : '';
+      }
+
+      if (isSubmitting) {
+        return;
       }
 
       if (uploadSubmitButton) {
@@ -28,6 +36,39 @@
         runSubmitButton.disabled = true;
       }
     };
+
+    uploadForm.addEventListener('submit', (event) => {
+      if (isSubmitting) {
+        event.preventDefault();
+        return;
+      }
+
+      isSubmitting = true;
+      const submitter = event.submitter;
+      const isUploadOnly = submitter && submitter.matches('[data-import-upload-submit]');
+      const selectedFile = fileInput && fileInput.files && fileInput.files.length > 0 ? fileInput.files[0] : null;
+      const fileLabel = selectedFile ? ` “${selectedFile.name}”` : '';
+
+      uploadForm.setAttribute('aria-busy', 'true');
+
+      if (submitStatus) {
+        submitStatus.classList.remove('d-none');
+      }
+
+      if (submitStatusText) {
+        submitStatusText.textContent = isUploadOnly
+          ? `Uploading${fileLabel} to the import inbox…`
+          : `Uploading and importing${fileLabel || ' the selected inbox file'}…`;
+      }
+
+      submitButtons.forEach((button) => {
+        button.disabled = true;
+      });
+
+      if (submitter) {
+        submitter.innerHTML = '<span class="spinner-border spinner-border-sm me-2" aria-hidden="true"></span>Working…';
+      }
+    });
 
     if (fileInput && chooseButton) {
       chooseButton.addEventListener('click', () => {
