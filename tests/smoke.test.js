@@ -131,6 +131,10 @@ test('import page keeps the file selector synchronized with the selected import 
   assert.match(view, /data-import-upload-form/);
   assert.match(view, /data-import-upload-button/);
   assert.match(view, /data-import-upload-name/);
+  assert.match(view, /data-import-submit-status/);
+  assert.match(script, /aria-busy/);
+  assert.match(script, /Uploading and importing/);
+  assert.match(script, /submitButtons\.forEach/);
   assert.match(script, /syncSelectedImportFileId/);
   assert.match(script, /window\.location\.assign/);
   assert.match(script, /fileInput\.click/);
